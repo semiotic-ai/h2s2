@@ -1,0 +1,4 @@
+[workspace]
+members = [
+  "H2S2",
+]
