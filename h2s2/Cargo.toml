@@ -1,0 +1,19 @@
+[package]
+name = "h2s2"
+version = "0.1.0"
+authors = [
+  "Bryan Cole <bryan.cole@semiotic.ai>",
+  "Severiano Sisneros <severiano@semiotic.ai>",
+  "Alexis Asseman <alexis@semiotic.ai>",
+  "Tomasz Kornuta <tomasz@semiotic.ai>",
+]
+license = "Apache-2.0"
+description = ""
+edition = "2021"
+keywords = ["holographic", "homomorphic", "signature-scheme"]
+catagories = ["cryptography", "cryptography::cryptocurrencies"]
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
