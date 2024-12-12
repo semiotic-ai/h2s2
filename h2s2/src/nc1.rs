@@ -10,8 +10,20 @@ use ark_ff::{BigInteger, UniformRand, Zero};
 use ark_std::rand::Rng;
 use digest::Digest;
 
+fn hash_to_g1<P: Pairing, D: Digest>(message_data: Vec<u8>) -> P::G1Affine {
+    let mut g1_point: Option<P::G1Affine> = None;
+    let mut counter = 0;
+    while g1_point.is_some() == false {
+        let mut tmp_message = message_data.clone();
+        tmp_message.push(counter);
+        let hash_out = D::digest(&tmp_message);
+        g1_point = P::G1Affine::from_random_bytes(&hash_out);
+        counter += 1;
+    }
+    g1_point.unwrap()
+}
+
 pub struct NC1<P: Pairing, D: Digest> {
-    parameters: Option<H2S2Parameters<P>>,
     _pairing: PhantomData<P>,
     _hash: PhantomData<D>,
 }
@@ -23,7 +35,7 @@ pub struct H2S2Parameters<P: Pairing> {
     // both the indexer and verifier need it. The secret key
     // remains with the gateway
     pub public_key: P::G2,
-    pub secret_key: P::ScalarField,
+    pub secret_key: Option<P::ScalarField>,
     pub max_lanes: usize,
 }
 
@@ -46,8 +58,8 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         let mut pp = H2S2Parameters {
             g1_generators,
             g2_generator,
-            secret_key: P::ScalarField::zero(), // Temporary placeholder
-            public_key: P::G2::zero(),          // Temporary placeholder
+            secret_key: Some(P::ScalarField::zero()), // Temporary placeholder
+            public_key: P::G2::zero(),                // Temporary placeholder
             max_lanes: n,
         };
 
@@ -55,7 +67,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         let (public_key, secret_key) = Self::keygen(&pp, rng)?;
 
         // Update the parameters with the generated keys
-        pp.secret_key = secret_key;
+        pp.secret_key = Some(secret_key);
         pp.public_key = public_key;
 
         Ok(pp)
@@ -113,7 +125,32 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         index: &[u8],
         message: &[Self::Message],
     ) -> Result<Self::Signature, Box<dyn Error>> {
-        Ok(P::G1::default())
+        use ark_std::vec::Vec;
+
+        // Concatenate the allocation ID (tag) with the index
+        let mut input = Vec::from(tag);
+        input.extend_from_slice(index);
+
+        // Hash the concatenated input to map it to a G1 element
+        let lane_point = hash_to_g1::<P, D>(input);
+
+        // Compute the message commitment
+        let mut message_commitment = P::G1::zero();
+        for (i, m) in message.iter().enumerate() {
+            // Multiply each message part with its respective generator
+            let mut message_point = pp.g1_generators[i].clone();
+            message_point = message_point.mul(*m);
+            message_commitment += message_point;
+        }
+
+        // Combine lane_point and message_commitment
+        let combined_point = lane_point.into_group() + message_commitment;
+
+        // Sign the combined point using the secret key
+        let mut signature = combined_point.clone();
+        signature = signature.mul(*sk);
+
+        Ok(signature)
     }
 
     fn verify(
@@ -124,7 +161,31 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         message: &[Self::Message],
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>> {
-        Ok(true)
+        // Concatenate the allocation ID (tag) with the index
+        let mut input = Vec::from(tag);
+        input.extend_from_slice(index);
+
+        // Hash the concatenated input to map it to a G1 element
+        let lane_point = hash_to_g1::<P, D>(input);
+
+        // Compute the message commitment
+        let mut message_commitment = P::G1::zero();
+        for (i, m) in message.iter().enumerate() {
+            // Multiply each message part with its respective generator
+            let mut message_point = pp.g1_generators[i].clone();
+            message_point = message_point.mul(*m);
+            message_commitment += message_point;
+        }
+
+        // Combine lane_point and message_commitment
+        let combined_point = lane_point.into_group() + message_commitment;
+
+        // Compute the pairings for verification
+        let lhs_pairing = P::pairing(*signature, pp.g2_generator);
+        let rhs_pairing = P::pairing(combined_point, *pk);
+
+        // Verify that the pairings match
+        Ok(lhs_pairing == rhs_pairing)
     }
 
     fn verify_aggregate(
@@ -169,7 +230,7 @@ mod tests {
         assert_eq!(params.max_lanes, 10);
 
         let expected_public_key = params.public_key;
-        let calculated_public_key = params.g2_generator.mul(params.secret_key);
+        let calculated_public_key = params.g2_generator.mul(params.secret_key.unwrap());
 
         assert_eq!(
             calculated_public_key, expected_public_key,
@@ -186,5 +247,34 @@ mod tests {
             .expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
+    }
+    #[test]
+    fn test_sign_and_verify() {
+        let params = &*PARAMS;
+        let allocation_id = b"example_allocation_id";
+        let index = b"lane_1";
+        let message = vec![ark_bn254::Fr::from(42u64), ark_bn254::Fr::from(7u64)];
+
+        let sk = params.secret_key.unwrap();
+        let pk = params.public_key;
+
+        // Sign the message
+        let signature =
+            NC1::<Bn254, Blake2b512>::sign(&params, &sk, allocation_id, index, &message)
+                .expect("Sign failed");
+
+        // Verify the signature
+        let is_valid = NC1::<Bn254, Blake2b512>::verify(
+            &params,
+            &pk,
+            allocation_id,
+            index,
+            &message,
+            &signature,
+        )
+        .expect("Verify failed");
+
+        assert!(is_valid, "Signature verification failed!");
+        println!("Signature successfully verified!");
     }
 }
