@@ -3,6 +3,7 @@ use std::{error::Error, marker::PhantomData, ops::MulAssign};
 use crate::holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme;
 use ark_bn254::{G1Projective, G2Projective};
 use ark_ec::pairing::Pairing;
+use ark_ec::AffineRepr;
 use ark_ff::{BigInteger, UniformRand, Zero};
 use ark_std::rand::Rng;
 use digest::Digest;
@@ -12,17 +13,17 @@ pub struct NC1<P: Pairing, D: Digest> {
     _hash: PhantomData<D>,
 }
 
-pub struct H2S2Parameters {
-    pub g1_generators: Vec<G1Projective>,
-    pub g2_generator: G2Projective,
-    pub public_key: G2Projective,
+pub struct H2S2Parameters<P: Pairing> {
+    pub g1_generators: Vec<P::G1>,
+    pub g2_generator: P::G2,
+    pub public_key: P::G2,
     pub max_lanes: usize,
 }
 
 impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<P, D>
     for NC1<P, D>
 {
-    type Parameters = H2S2Parameters;
+    type Parameters = H2S2Parameters<P>;
     type PublicKey = P::G2;
     type SecretKey = P::ScalarField;
     type Signature = P::G1;
@@ -30,13 +31,13 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     type Weight = usize;
 
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
-        let g2_generator = G2Projective::rand(rng);
+        let g2_generator = P::G2::rand(rng);
+        println!("g2_generator, {:?}", g2_generator);
 
         // Note that although max_lanes number of generators are specificied, we only use the first one in practice
-        // TODO: In here, we use only the first Generator. But why are there n+1 generators? Not just n? In the paper
-        // it is mentioned that we need n. And why just use the first one if we n?
+        // All the other generators are used for security proofs
         Ok(H2S2Parameters {
-            g1_generators: (0..=n).map(|_| G1Projective::rand(rng)).collect(),
+            g1_generators: (0..=n).map(|_| P::G1::rand(rng)).collect(),
             g2_generator,
             public_key: g2_generator.clone(),
             max_lanes: n, // Set max_lanes to the number of generators
