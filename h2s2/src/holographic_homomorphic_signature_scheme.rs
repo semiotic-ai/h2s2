@@ -15,7 +15,9 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
 
     /// Generate hash aggregate (H_a) with `tag` and `n` lanes
-    fn precompute(tag: &[u8], n: usize) -> Result<P::G1, Box<dyn Error>>;
+    /// the `tag` is supposed to be the allocation_id
+    /// We can also generate the allocation_id with a scalar field:
+    fn precompute(pp: &Self::Parameters, tag: &[u8], n: usize) -> Result<P::G1, Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
     fn keygen<R: Rng>(
