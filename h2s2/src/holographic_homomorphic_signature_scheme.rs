@@ -1,11 +1,7 @@
-use ark_std::UniformRand;
-use ark_std::Zero;
-use std::error::Error;
 use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
-use ark_std::{marker::PhantomData, rand::Rng};
+use ark_std::rand::Rng;
 use digest::Digest;
-use std::ops::MulAssign;
+use std::error::Error;
 
 pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + Sync> {
     type Parameters;
