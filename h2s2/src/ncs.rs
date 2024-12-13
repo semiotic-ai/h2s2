@@ -56,7 +56,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
         // Prepare the parameters without the secret/public keys
         let g1_generators: Vec<P::G1> = (0..=n).map(|_| P::G1::rand(rng)).collect();
-        let mut pp = H2S2Parameters {
+        let mut pp: H2S2Parameters<P> = H2S2Parameters {
             g1_generators,
             g2_generator,
             secret_key: Some(P::ScalarField::zero()), // Temporary placeholder
@@ -93,14 +93,12 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
             let mut input = Vec::from(tag);
             input.extend_from_slice(&lane_id.to_le_bytes());
 
-            // Hash the concatenated input to generate a scalar value
-            let hash_scalar = P::ScalarField::from_le_bytes_mod_order(D::digest(&input).as_ref());
-
-            // Map the scalar to a G1 element
-            let hash_point = pp.g1_generators[0].mul(hash_scalar);
+            // Hash the concatenated input to map it to a G1 element
+            let lane_point = hash_to_g1::<P, D>(input);
 
             // Add the resulting point to the hash aggregate
-            hash_aggregate += hash_point;
+            //TODO: substitutue the hash_point by the lane_point being calculated
+            hash_aggregate += lane_point;
         }
 
         Ok(hash_aggregate)
@@ -139,7 +137,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         let mut message_commitment = P::G1::zero();
         for (i, m) in message.iter().enumerate() {
             // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[i].clone();
+            let mut message_point = pp.g1_generators[0].clone();
             message_point = message_point.mul(*m);
             message_commitment += message_point;
         }
@@ -173,7 +171,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         let mut message_commitment = P::G1::zero();
         for (i, m) in message.iter().enumerate() {
             // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[i].clone();
+            let mut message_point = pp.g1_generators[0].clone();
             message_point = message_point.mul(*m);
             message_commitment += message_point;
         }
@@ -192,17 +190,20 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     fn verify_aggregate(
         pp: &Self::Parameters,
         pk: &Self::PublicKey,
-        // TODO: is the tag necessary for the verify_aggregate?1
-        tag: &[u8],
         message_aggregate: &[Self::Message],
         hash_aggregate: &P::G1,
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>> {
-        // Compute the message commitment for the aggregated message
+        // Validate that the aggregate message matches the expected format
+        if message_aggregate.len() != 1 {
+            return Err("Message aggregate must be a single scalar".into());
+        }
+
+        // Compute the message commitment for the aggregated messages
         let mut message_commitment = P::G1::zero();
         for (i, m) in message_aggregate.iter().enumerate() {
             // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[i].clone();
+            let mut message_point = pp.g1_generators[0].clone();
             message_point = message_point.mul(*m);
             message_commitment += message_point;
         }
@@ -284,35 +285,52 @@ mod tests {
 
         println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
     }
+
     #[test]
     fn test_sign_and_verify() {
         let params = &*PARAMS;
         let allocation_id = b"example_allocation_id";
-        let index = b"lane_1";
-        let message: Vec<ark_ff::Fp<ark_ff::MontBackend<ark_bn254::FrConfig, 4>, 4>> =
-            vec![ark_bn254::Fr::from(42u64), ark_bn254::Fr::from(7u64)];
-
         let sk = params.secret_key.unwrap();
         let pk = params.public_key;
+        let messages: Vec<ark_bn254::Fr> = (0..N)
+            .map(|_| ark_bn254::Fr::rand(&mut test_rng()))
+            .collect();
 
-        // Sign the message
-        let signature =
-            NCS::<Bn254, Blake2b512>::sign(&params, &sk, allocation_id, index, &message)
-                .expect("Sign failed");
+        // Iterate through indices and sign each message
+        for index in 0..N {
+            let index_bytes = &(index.to_le_bytes())[..];
 
-        // Verify the signature
-        let is_valid = NCS::<Bn254, Blake2b512>::verify(
-            &params,
-            &pk,
-            allocation_id,
-            index,
-            &message,
-            &signature,
-        )
-        .expect("Verify failed");
+            // Sign the message
+            let signature = NCS::<Bn254, Blake2b512>::sign(
+                &params,
+                &sk,
+                allocation_id,
+                index_bytes,
+                &[messages[index]],
+            )
+            .expect("Sign failed");
 
-        assert!(is_valid, "Signature verification failed!");
-        println!("Signature successfully verified!");
+            let index_bytes = &(index.to_le_bytes())[..];
+
+            // Verify the signature
+            let is_valid = NCS::<Bn254, Blake2b512>::verify(
+                &params,
+                &pk,
+                allocation_id,
+                index_bytes,
+                &[messages[index]],
+                &signature,
+            )
+            .expect("Verify failed");
+
+            assert!(
+                is_valid,
+                "Signature verification failed for index {}!",
+                index
+            );
+        }
+
+        println!("All signatures successfully verified for indices 0..{N}!");
     }
 
     #[test]
@@ -321,16 +339,43 @@ mod tests {
         let sk = params.secret_key.unwrap();
         let pk = params.public_key;
         let allocation_id = b"example_allocation_id";
-        let index = b"lane_1";
-        let messages: Vec<_> = vec![ark_bn254::Fr::from(42u64), ark_bn254::Fr::from(7u64)];
+        let messages: Vec<ark_bn254::Fr> = (0..N)
+            .map(|_| ark_bn254::Fr::rand(&mut test_rng()))
+            .collect();
 
         // Generate individual signatures
         let signatures: Vec<_> = (0..N)
-            .map(|_| {
-                NCS::<Bn254, Blake2b512>::sign(&params, &sk, allocation_id, index, &messages)
-                    .expect("Sign failed")
+            .map(|index| {
+                // Convert the index into a byte slice
+                let index_bytes = &(index.to_le_bytes())[..];
+
+                // Sign the message using the index as part of the signing process
+                NCS::<Bn254, Blake2b512>::sign(
+                    &params,
+                    &sk,
+                    allocation_id,
+                    index_bytes,
+                    &[messages[index]],
+                )
+                .expect("Sign failed")
             })
             .collect();
+
+        // Verify the signature
+
+        for i in 0..N {
+            let index_bytes = &(i.to_le_bytes())[..];
+            let is_valid = NCS::<Bn254, Blake2b512>::verify(
+                &params,
+                &pk,
+                allocation_id,
+                index_bytes,
+                &[messages[i]],
+                &signatures[i],
+            )
+            .expect("Verify failed");
+            assert!(is_valid, "Invalid single signature!");
+        }
 
         // Generate weights (all set to 1)
         let weights: Vec<usize> = vec![1; N];
@@ -343,14 +388,13 @@ mod tests {
         let hash_aggregate = NCS::<Bn254, Blake2b512>::precompute(&params, allocation_id, N)
             .expect("Precompute failed");
 
-        // Aggregate the messages (sum all messages into one scalar)
+        // // Aggregate the messages (sum all messages into one scalar)
         let message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
 
-        // Verify the aggregated signature
+        // // Verify the aggregated signature
         let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
             &params,
             &pk,
-            allocation_id,
             &[message_aggregate],
             &hash_aggregate,
             &aggregated_signature,

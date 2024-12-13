@@ -35,6 +35,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     ) -> Result<Self::Signature, Box<dyn Error>>;
 
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
+    ///  TODO: index should be restricted to a number from 1 to N (max number of lanes)
     fn verify(
         pp: &Self::Parameters,
         pk: &Self::PublicKey,
@@ -48,7 +49,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     fn verify_aggregate(
         pp: &Self::Parameters,
         pk: &Self::PublicKey,
-        tag: &[u8],
+        // tag: &[u8],
         message_aggregate: &[Self::Message],
         hash_aggregate: &P::G1,
         signature: &Self::Signature,
