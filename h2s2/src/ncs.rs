@@ -1,4 +1,4 @@
-use std::ops::Mul;
+use std::ops::{Add, Mul, MulAssign};
 use std::{error::Error, marker::PhantomData};
 
 use crate::holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme;
@@ -39,15 +39,35 @@ pub struct H2S2Parameters<P: Pairing> {
     pub max_lanes: usize,
 }
 
+#[derive(Clone)]
+pub struct Signature<P: Pairing> {
+    pub signature: P::G1,
+    pub lane_id: usize,
+    pub value: P::ScalarField,
+}
+
+#[derive(Clone)]
+pub struct AggregateSignature<P: Pairing> {
+    pub signature: P::G1,
+    pub total_value: P::ScalarField,
+}
+
+#[derive(Clone)]
+pub struct AllocationParameters<P: Pairing> {
+    pub allocation_hash: P::G1,
+    pub allocation_id: P::ScalarField,
+}
+
 impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<P, D>
     for NCS<P, D>
 {
     type Parameters = H2S2Parameters<P>;
     type PublicKey = P::G2;
     type SecretKey = P::ScalarField;
-    type Signature = P::G1;
+    type Signature = Signature<P>;
     type Message = P::ScalarField;
     type Weight = usize;
+    type AggregateSignature = AggregateSignature<P>;
 
     // n represents the max_lanes amount
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
@@ -77,31 +97,25 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     //TODO: allocationn_ids (tag in this case) must be unpredictable
     // some random value has to be appended during initialization, prior
     // to the precompute in this function
-    fn precompute(pp: &Self::Parameters, tag: &[u8], n: usize) -> Result<P::G1, Box<dyn Error>> {
-        use ark_std::vec::Vec;
-
-        // Initialize the hash aggregate
-        let mut hash_aggregate = P::G1::zero();
-
-        // Iterate through the lane IDs from 1 to N
-        for lane_id in 1..=n {
-            //TODO: in the original, the allocation_id is a random value from
-            // the ScalarField. What is different here from using the u8 slice?
-            // let allocation_id = P::Fr::rand(rng);
-
-            // Concatenate the tag (allocationId) with the lane ID
-            let mut input = Vec::from(tag);
-            input.extend_from_slice(&lane_id.to_le_bytes());
-
-            // Hash the concatenated input to map it to a G1 element
-            let lane_point = hash_to_g1::<P, D>(input);
-
-            // Add the resulting point to the hash aggregate
-            //TODO: substitutue the hash_point by the lane_point being calculated
-            hash_aggregate += lane_point;
+    fn precompute<R: Rng>(
+        _pp: &Self::Parameters,
+        rng: &mut R,
+        n: usize,
+    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>> {
+        let allocation_id = P::ScalarField::rand(rng);
+        let hash_vec = (0..n)
+            .into_iter()
+            .map(|lane_id| {
+                let mut message_data = allocation_id.into_bigint().to_bytes_be();
+                message_data.append(&mut lane_id.to_be_bytes().to_vec());
+                hash_to_g1::<P, D>(message_data)
+            })
+            .collect::<Vec<_>>();
+        let mut allocation_hash = P::G1::zero();
+        for hash_val in hash_vec {
+            allocation_hash += hash_val;
         }
-
-        Ok(hash_aggregate)
+        Ok((allocation_hash, allocation_id))
     }
 
     fn keygen<R: Rng>(
@@ -119,128 +133,77 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn sign(
         pp: &Self::Parameters,
-        sk: &Self::SecretKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
+        tag: P::ScalarField,
+        index: usize,
+        message: <P as Pairing>::ScalarField,
     ) -> Result<Self::Signature, Box<dyn Error>> {
-        use ark_std::vec::Vec;
+        let mut lane_data = tag.into_bigint().to_bytes_be();
+        lane_data.append(&mut index.to_be_bytes().to_vec());
+        let lane_point = hash_to_g1::<P, D>(lane_data);
 
-        // Concatenate the allocation ID (tag) with the index
-        let mut input = Vec::from(tag);
-        input.extend_from_slice(index);
+        let mut value_point = pp.g1_generators[0].clone();
+        value_point.mul_assign(message);
 
-        // Hash the concatenated input to map it to a G1 element
-        let lane_point = hash_to_g1::<P, D>(input);
-
-        // Compute the message commitment
-        let mut message_commitment = P::G1::zero();
-        for (i, m) in message.iter().enumerate() {
-            // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[0].clone();
-            message_point = message_point.mul(*m);
-            message_commitment += message_point;
-        }
-
-        // Combine lane_point and message_commitment
-        let combined_point = lane_point.into_group() + message_commitment;
-
-        // Sign the combined point using the secret key
-        let mut signature = combined_point.clone();
-        signature = signature.mul(*sk);
-
-        Ok(signature)
+        let message_point = lane_point.into_group() + value_point;
+        let mut signature = message_point.clone();
+        signature.mul_assign(pp.secret_key.unwrap());
+        Ok(Signature {
+            signature,
+            lane_id: index,
+            value: message,
+        })
     }
 
     fn verify(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
+        tag: P::ScalarField,
+        index: usize,
+        message: &Self::Message,
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>> {
-        // Concatenate the allocation ID (tag) with the index
-        let mut input = Vec::from(tag);
-        input.extend_from_slice(index);
+        let mut lane_data = tag.into_bigint().to_bytes_be();
+        lane_data.append(&mut index.to_be_bytes().to_vec());
+        let lane_point = hash_to_g1::<P, D>(lane_data);
 
-        // Hash the concatenated input to map it to a G1 element
-        let lane_point = hash_to_g1::<P, D>(input);
+        let mut value_point = pp.g1_generators[0].clone();
+        value_point.mul_assign(message);
 
-        // Compute the message commitment
-        let mut message_commitment = P::G1::zero();
-        for (i, m) in message.iter().enumerate() {
-            // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[0].clone();
-            message_point = message_point.mul(*m);
-            message_commitment += message_point;
-        }
-
-        // Combine lane_point and message_commitment
-        let combined_point = lane_point.into_group() + message_commitment;
-
-        // Compute the pairings for verification
-        let lhs_pairing = P::pairing(*signature, pp.g2_generator);
-        let rhs_pairing = P::pairing(combined_point, *pk);
-
-        // Verify that the pairings match
+        let rhs_pairing = P::pairing(lane_point.into_group() + value_point, pp.public_key);
+        let lhs_pairing = P::pairing(signature.signature, pp.g2_generator);
         Ok(lhs_pairing == rhs_pairing)
     }
 
     fn verify_aggregate(
         pp: &Self::Parameters,
         pk: &Self::PublicKey,
-        message_aggregate: &[Self::Message],
+        message_aggregate: &[<P as Pairing>::ScalarField],
         hash_aggregate: &P::G1,
-        signature: &Self::Signature,
+        signature: &Self::AggregateSignature,
     ) -> Result<bool, Box<dyn Error>> {
-        // Validate that the aggregate message matches the expected format
-        if message_aggregate.len() != 1 {
-            return Err("Message aggregate must be a single scalar".into());
-        }
+        let lane_point = hash_aggregate;
+        let mut value_point = pp.g1_generators[0].clone();
+        value_point.mul_assign(signature.total_value);
 
-        // Compute the message commitment for the aggregated messages
-        let mut message_commitment = P::G1::zero();
-        for (i, m) in message_aggregate.iter().enumerate() {
-            // Multiply each message part with its respective generator
-            let mut message_point = pp.g1_generators[0].clone();
-            message_point = message_point.mul(*m);
-            message_commitment += message_point;
-        }
-
-        // Combine the hash aggregate with the message commitment
-        let combined_point = *hash_aggregate + message_commitment;
-
-        // Compute the pairings for verification
-        let lhs_pairing = P::pairing(*signature, pp.g2_generator);
-        let rhs_pairing = P::pairing(combined_point, *pk);
-
-        // Verify that the pairings match
+        let rhs_pairing = P::pairing(lane_point.add(value_point), pp.public_key);
+        let lhs_pairing = P::pairing(signature.signature, pp.g2_generator);
         Ok(lhs_pairing == rhs_pairing)
     }
 
     fn evaluate(
         signatures: &[Self::Signature],
-        weights: &[Self::Weight],
-    ) -> Result<Self::Signature, Box<dyn Error>> {
-        // Ensure the inputs are valid
-        if signatures.len() != weights.len() {
-            return Err("Signatures and weights must have the same length".into());
-        }
-
-        // Initialize the aggregate signature as the identity element in G1
+        _weights: &[Self::Weight],
+    ) -> Result<Self::AggregateSignature, Box<dyn Error>> {
         let mut aggregate_signature = P::G1::zero();
-
-        // Iterate over signatures and weights
-        for (sig, &weight) in signatures.iter().zip(weights.iter()) {
-            // Convert the weight to a scalar field element
-            let weight_scalar = P::ScalarField::from(weight as u64);
-
-            // Perform the weighted addition to the aggregate signature
-            aggregate_signature += sig.mul(weight_scalar);
+        let mut total_value = P::ScalarField::zero();
+        for sig in signatures {
+            aggregate_signature += sig.signature;
+            total_value += sig.value;
         }
 
-        Ok(aggregate_signature)
+        Ok(AggregateSignature {
+            signature: aggregate_signature,
+            total_value,
+        })
     }
 }
 
@@ -278,47 +241,42 @@ mod tests {
     #[test]
     fn test_precompute() {
         let params = &*PARAMS;
-        let allocation_id = b"example_allocation_id";
-
-        let hash_aggregate = NCS::<Bn254, Blake2b512>::precompute(&params, allocation_id, N)
-            .expect("Precompute failed");
+        let mut rng = test_rng();
+        let (hash_aggregate, alloc_id) =
+            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
+        println!("allocation_id {:?}", alloc_id);
     }
 
     #[test]
     fn test_sign_and_verify() {
+        let mut rng = test_rng();
         let params = &*PARAMS;
-        let allocation_id = b"example_allocation_id";
+
+        // Precompute the hash aggregate and allocation ID
+        let (hash_aggregate, allocation_id) =
+            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
+
         let sk = params.secret_key.unwrap();
         let pk = params.public_key;
-        let messages: Vec<ark_bn254::Fr> = (0..N)
-            .map(|_| ark_bn254::Fr::rand(&mut test_rng()))
-            .collect();
+
+        // Generate messages for each lane/index
+        let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
 
         // Iterate through indices and sign each message
         for index in 0..N {
-            let index_bytes = &(index.to_le_bytes())[..];
+            // Sign the message with the current index
+            let signature =
+                NCS::<Bn254, Blake2b512>::sign(&params, allocation_id, index, messages[index])
+                    .expect("Sign failed");
 
-            // Sign the message
-            let signature = NCS::<Bn254, Blake2b512>::sign(
-                &params,
-                &sk,
-                allocation_id,
-                index_bytes,
-                &[messages[index]],
-            )
-            .expect("Sign failed");
-
-            let index_bytes = &(index.to_le_bytes())[..];
-
-            // Verify the signature
+            // Verify the signature with the same index
             let is_valid = NCS::<Bn254, Blake2b512>::verify(
                 &params,
-                &pk,
                 allocation_id,
-                index_bytes,
-                &[messages[index]],
+                index,
+                &messages[index],
                 &signature,
             )
             .expect("Verify failed");
@@ -330,68 +288,55 @@ mod tests {
             );
         }
 
-        println!("All signatures successfully verified for indices 0..{N}!");
+        println!("All signatures successfully verified for indices 0..{}!", N);
     }
 
     #[test]
     fn test_aggregate() {
+        let mut rng = test_rng();
         let params = &*PARAMS;
         let sk = params.secret_key.unwrap();
         let pk = params.public_key;
-        let allocation_id = b"example_allocation_id";
-        let messages: Vec<ark_bn254::Fr> = (0..N)
-            .map(|_| ark_bn254::Fr::rand(&mut test_rng()))
-            .collect();
 
-        // Generate individual signatures
+        // Generate random messages for each lane/index
+        let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
+
+        // Precompute the hash aggregate and allocation ID
+        let (hash_aggregate, allocation_id) =
+            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
+
+        // Generate individual signatures for each message
         let signatures: Vec<_> = (0..N)
             .map(|index| {
-                // Convert the index into a byte slice
-                let index_bytes = &(index.to_le_bytes())[..];
-
-                // Sign the message using the index as part of the signing process
-                NCS::<Bn254, Blake2b512>::sign(
-                    &params,
-                    &sk,
-                    allocation_id,
-                    index_bytes,
-                    &[messages[index]],
-                )
-                .expect("Sign failed")
+                NCS::<Bn254, Blake2b512>::sign(&params, allocation_id, index, messages[index])
+                    .expect("Sign failed")
             })
             .collect();
 
-        // Verify the signature
-
-        for i in 0..N {
-            let index_bytes = &(i.to_le_bytes())[..];
+        // Verify each individual signature
+        for (index, signature) in signatures.iter().enumerate() {
             let is_valid = NCS::<Bn254, Blake2b512>::verify(
                 &params,
-                &pk,
                 allocation_id,
-                index_bytes,
-                &[messages[i]],
-                &signatures[i],
+                index,
+                &messages[index],
+                signature,
             )
             .expect("Verify failed");
-            assert!(is_valid, "Invalid single signature!");
+            assert!(is_valid, "Invalid signature for index {}!", index);
         }
 
-        // Generate weights (all set to 1)
+        // Generate weights (all set to 1 for uniform aggregation)
         let weights: Vec<usize> = vec![1; N];
 
         // Aggregate the signatures
         let aggregated_signature =
             NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
-        // Precompute the hash aggregate
-        let hash_aggregate = NCS::<Bn254, Blake2b512>::precompute(&params, allocation_id, N)
-            .expect("Precompute failed");
-
-        // // Aggregate the messages (sum all messages into one scalar)
+        // Compute the aggregate message (sum of all messages)
         let message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
 
-        // // Verify the aggregated signature
+        // Verify the aggregated signature
         let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
             &params,
             &pk,
@@ -401,7 +346,14 @@ mod tests {
         )
         .expect("Verify failed");
 
-        assert!(is_valid, "Aggregated signature verification failed!");
-        println!("Aggregated signature successfully verified!");
+        assert!(
+            is_valid,
+            "Aggregated signature verification failed for the entire set of messages!"
+        );
+
+        println!(
+            "Aggregated signature successfully verified for all {} messages!",
+            N
+        );
     }
 }
