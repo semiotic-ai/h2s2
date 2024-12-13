@@ -10,14 +10,18 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type Signature;
     type Message;
     type Weight;
+    type AggregateSignature;
 
     /// Generate one G2 element and `n` G1 elements
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
 
-    /// Generate hash aggregate (H_a) with `tag` and `n` lanes
-    /// the `tag` is supposed to be the allocation_id
-    /// We can also generate the allocation_id with a scalar field:
-    fn precompute(pp: &Self::Parameters, tag: &[u8], n: usize) -> Result<P::G1, Box<dyn Error>>;
+    /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
+    /// allocation_id as a ScalarField
+    fn precompute<R: Rng>(
+        pp: &Self::Parameters,
+        rng: &mut R,
+        n: usize,
+    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
     fn keygen<R: Rng>(
@@ -28,36 +32,34 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Sign `message` with `tag` at `index`
     fn sign(
         pp: &Self::Parameters,
-        sk: &Self::SecretKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
+        tag: P::ScalarField,
+        index: usize,
+        message: Self::Message,
     ) -> Result<Self::Signature, Box<dyn Error>>;
 
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
     ///  TODO: index should be restricted to a number from 1 to N (max number of lanes)
     fn verify(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
+        tag: P::ScalarField,
+        index: usize,
+        message: &Self::Message,
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    /// Verify aggregate `signature` matches `message_aggregate` with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
+    // Verify aggregate `signature` matches `message_aggregate` with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
         pk: &Self::PublicKey,
         // tag: &[u8],
         message_aggregate: &[Self::Message],
         hash_aggregate: &P::G1,
-        signature: &Self::Signature,
+        signature: &Self::AggregateSignature,
     ) -> Result<bool, Box<dyn Error>>;
 
     /// Aggregate `signatures` with `weights`
     fn evaluate(
         signatures: &[Self::Signature],
         weights: &[Self::Weight],
-    ) -> Result<Self::Signature, Box<dyn Error>>;
+    ) -> Result<Self::AggregateSignature, Box<dyn Error>>;
 }
