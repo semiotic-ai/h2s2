@@ -188,7 +188,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn evaluate(
         signatures: &[Self::Signature],
-        _weights: &[Self::Weight],
+        weights: &[Self::Weight],
     ) -> Result<Self::AggregatedSignature, Box<dyn Error>> {
         let mut aggregate_signature = P::G1::zero();
         let mut total_value = P::ScalarField::zero();
@@ -289,8 +289,6 @@ mod tests {
     fn test_aggregate() {
         let mut rng = test_rng();
         let params = &*PARAMS;
-        // let sk = params.secret_key.unwrap();
-        // let pk = params.public_key;
 
         // Generate random messages for each lane/index
         let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
@@ -327,9 +325,6 @@ mod tests {
         let aggregated_signature =
             NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
-        // Compute the aggregate message (sum of all messages)
-        // let message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
-
         // Verify the aggregated signature
         let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
             &params,
@@ -357,9 +352,6 @@ mod tests {
         // Aggregate the signatures, including the duplicate
         let tampered_aggregate_signature =
             NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
-
-        // Compute the aggregate message (should fail because of duplicate signature)
-        // let tampered_message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
 
         // Verify the aggregated signature with the tampered signature table
         let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
