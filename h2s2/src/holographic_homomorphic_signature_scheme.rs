@@ -10,7 +10,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type Signature;
     type Message;
     type Weight;
-    type AggregateSignature;
+    type AggregatedSignature;
 
     /// Generate one G2 element and `n` G1 elements
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
@@ -47,19 +47,18 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    // Verify aggregate `signature` matches `message_aggregate` with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
+    /// Verify aggregate `signature` matches `message_aggregate`
+    /// contained in [`AggregatedSignature`] with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
         // tag: &[u8],
-        message_aggregate: &[Self::Message],
         hash_aggregate: &P::G1,
-        signature: &Self::AggregateSignature,
+        signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>>;
 
     /// Aggregate `signatures` with `weights`
     fn evaluate(
         signatures: &[Self::Signature],
         weights: &[Self::Weight],
-    ) -> Result<Self::AggregateSignature, Box<dyn Error>>;
+    ) -> Result<Self::AggregatedSignature, Box<dyn Error>>;
 }

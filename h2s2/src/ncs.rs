@@ -2,7 +2,6 @@ use std::ops::{Add, Mul, MulAssign};
 use std::{error::Error, marker::PhantomData};
 
 use crate::holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme;
-use ark_bn254::{G1Projective, G2Projective};
 use ark_ec::pairing::Pairing;
 use ark_ec::AffineRepr;
 use ark_ff::PrimeField;
@@ -47,7 +46,7 @@ pub struct Signature<P: Pairing> {
 }
 
 #[derive(Clone)]
-pub struct AggregateSignature<P: Pairing> {
+pub struct AggregatedSignature<P: Pairing> {
     pub signature: P::G1,
     pub total_value: P::ScalarField,
 }
@@ -67,7 +66,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     type Signature = Signature<P>;
     type Message = P::ScalarField;
     type Weight = usize;
-    type AggregateSignature = AggregateSignature<P>;
+    type AggregatedSignature = AggregatedSignature<P>;
 
     // n represents the max_lanes amount
     fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
@@ -175,10 +174,8 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn verify_aggregate(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
-        message_aggregate: &[<P as Pairing>::ScalarField],
         hash_aggregate: &P::G1,
-        signature: &Self::AggregateSignature,
+        signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>> {
         let lane_point = hash_aggregate;
         let mut value_point = pp.g1_generators[0].clone();
@@ -192,7 +189,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     fn evaluate(
         signatures: &[Self::Signature],
         _weights: &[Self::Weight],
-    ) -> Result<Self::AggregateSignature, Box<dyn Error>> {
+    ) -> Result<Self::AggregatedSignature, Box<dyn Error>> {
         let mut aggregate_signature = P::G1::zero();
         let mut total_value = P::ScalarField::zero();
         for sig in signatures {
@@ -200,7 +197,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
             total_value += sig.value;
         }
 
-        Ok(AggregateSignature {
+        Ok(AggregatedSignature {
             signature: aggregate_signature,
             total_value,
         })
@@ -255,11 +252,8 @@ mod tests {
         let params = &*PARAMS;
 
         // Precompute the hash aggregate and allocation ID
-        let (hash_aggregate, allocation_id) =
+        let (_, allocation_id) =
             NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
-
-        let sk = params.secret_key.unwrap();
-        let pk = params.public_key;
 
         // Generate messages for each lane/index
         let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
@@ -295,8 +289,8 @@ mod tests {
     fn test_aggregate() {
         let mut rng = test_rng();
         let params = &*PARAMS;
-        let sk = params.secret_key.unwrap();
-        let pk = params.public_key;
+        // let sk = params.secret_key.unwrap();
+        // let pk = params.public_key;
 
         // Generate random messages for each lane/index
         let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
@@ -306,7 +300,7 @@ mod tests {
             NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
-        let signatures: Vec<_> = (0..N)
+        let mut signatures: Vec<_> = (0..N)
             .map(|index| {
                 NCS::<Bn254, Blake2b512>::sign(&params, allocation_id, index, messages[index])
                     .expect("Sign failed")
@@ -334,13 +328,11 @@ mod tests {
             NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
         // Compute the aggregate message (sum of all messages)
-        let message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
+        // let message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
 
         // Verify the aggregated signature
         let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
             &params,
-            &pk,
-            &[message_aggregate],
             &hash_aggregate,
             &aggregated_signature,
         )
@@ -355,5 +347,34 @@ mod tests {
             "Aggregated signature successfully verified for all {} messages!",
             N
         );
+
+        // this next signature aggregation test should fail
+        // Introduce a duplicate signature to simulate a lying indexer
+        let random_index = rng.gen_range(0..N);
+        let duplicate_signature = signatures[random_index].clone();
+        signatures.push(duplicate_signature);
+
+        // Aggregate the signatures, including the duplicate
+        let tampered_aggregate_signature =
+            NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
+
+        // Compute the aggregate message (should fail because of duplicate signature)
+        // let tampered_message_aggregate: ark_bn254::Fr = messages.iter().copied().sum();
+
+        // Verify the aggregated signature with the tampered signature table
+        let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
+            &params,
+            &hash_aggregate,
+            &tampered_aggregate_signature,
+        )
+        .expect("Verify failed");
+
+        // Assert that verification fails
+        assert!(
+            !is_valid,
+            "Aggregated signature verification should fail with a tampered signature table!"
+        );
+
+        println!("Tampered aggregated signature verification correctly failed as expected!");
     }
 }
