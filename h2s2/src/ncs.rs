@@ -190,11 +190,18 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         signatures: &[Self::Signature],
         weights: &[Self::Weight],
     ) -> Result<Self::AggregatedSignature, Box<dyn Error>> {
+        // Ensure that the lengths of the inputs match
+        if signatures.len() != weights.len() {
+            return Err("Signatures and weights must have the same length".into());
+        }
+
         let mut aggregate_signature = P::G1::zero();
         let mut total_value = P::ScalarField::zero();
-        for sig in signatures {
-            aggregate_signature += sig.signature;
-            total_value += sig.value;
+
+        for (sig, &wt) in signatures.iter().zip(weights.iter()) {
+            let weight_scalar = P::ScalarField::from(wt as u64);
+            aggregate_signature += sig.signature.mul(weight_scalar);
+            total_value += weight_scalar * sig.value;
         }
 
         Ok(AggregatedSignature {
@@ -348,6 +355,8 @@ mod tests {
         let random_index = rng.gen_range(0..N);
         let duplicate_signature = signatures[random_index].clone();
         signatures.push(duplicate_signature);
+        // adds 1 more weight to match the added signature
+        let weights: Vec<usize> = vec![1; N + 1];
 
         // Aggregate the signatures, including the duplicate
         let tampered_aggregate_signature =
