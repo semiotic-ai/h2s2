@@ -219,24 +219,43 @@ mod tests {
     use once_cell::sync::Lazy;
 
     static N: usize = 10; // Define the number of generators
+    static PARAMS: Lazy<H2S2Parameters<Bn254>> = Lazy::new(|| {
+        let mut rng = test_rng();
 
-    static PARAMS: Lazy<H2S2Parameters<Bn254>> =
-        Lazy::new(|| NCS::<Bn254, Blake2b512>::setup(N).expect("Setup failed"));
+        let mut params = NCS::<Bn254, Blake2b512>::setup(N).expect("Setup failed");
+
+        // Generate the secret and public keys using keygen
+        let (pk, sk) = NCS::<Bn254, Blake2b512>::keygen(&params, &mut rng).expect("Keygen failed");
+
+        params.secret_key = Some(sk);
+        params.public_key = pk;
+        params
+    });
 
     #[test]
-    fn test_setup() {
-        let params = &*PARAMS;
+    fn test_setup_and_keygen() {
+        let mut rng = test_rng();
+        let n = 10;
 
-        assert_eq!(params.g1_generators.len(), 11); // n + 1
-        assert_eq!(params.max_lanes, 10);
+        let params = NCS::<Bn254, Blake2b512>::setup(n).expect("Setup failed");
 
-        let expected_public_key = params.public_key;
-        let calculated_public_key = params.g2_generator.mul(params.secret_key.unwrap());
+        let (pk, sk) = NCS::<Bn254, Blake2b512>::keygen(&params, &mut rng).expect("Keygen failed");
 
         assert_eq!(
-            calculated_public_key, expected_public_key,
-            "Public key and private key relation is invalid!"
+            params.g1_generators.len(),
+            n + 1,
+            "Incorrect number of G1 generators"
         );
+        assert_eq!(params.max_lanes, n, "Max lanes value mismatch");
+
+        // Verify the public key matches the secret key and G2 generator relationship
+        let calculated_public_key = params.g2_generator.mul(sk);
+        assert_eq!(
+            calculated_public_key, pk,
+            "Public key does not match the calculated value from secret key and G2 generator"
+        );
+
+        println!("Setup and Keygen tests passed!");
     }
 
     #[test]
