@@ -4,6 +4,7 @@ use std::{error::Error, marker::PhantomData};
 use crate::holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme;
 use ark_ec::pairing::Pairing;
 use ark_ec::AffineRepr;
+use ark_ec::PrimeGroup;
 use ark_ff::PrimeField;
 use ark_ff::{BigInteger, UniformRand, Zero};
 use ark_std::rand::Rng;
@@ -69,26 +70,24 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     type AggregatedSignature = AggregatedSignature<P>;
 
     // n represents the max_lanes amount
-    fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
-        // Generate the G2 generator
-        let g2_generator = P::G2::rand(rng);
+    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
+        // Use the hardcoded G2 generator from the Pairing trait
+        let g2_generator = P::G2::generator();
 
-        // Prepare the parameters without the secret/public keys
-        let g1_generators: Vec<P::G1> = (0..=n).map(|_| P::G1::rand(rng)).collect();
-        let mut pp: H2S2Parameters<P> = H2S2Parameters {
+        // Generate a deterministic set of G1 generators based on the hardcoded G1 generator
+        let g1_base_generator = P::G1::generator();
+        let g1_generators: Vec<P::G1> = (0..=n)
+            .map(|i| g1_base_generator.mul(&P::ScalarField::from(i as u64)))
+            .collect();
+
+        // Initialize parameters without secret/public keys
+        let pp: H2S2Parameters<P> = H2S2Parameters {
             g1_generators,
             g2_generator,
             secret_key: Some(P::ScalarField::zero()), // Temporary placeholder
             public_key: P::G2::zero(),                // Temporary placeholder
             max_lanes: n,
         };
-
-        // Use the keygen function to generate the secret/public key pair
-        let (public_key, secret_key) = Self::keygen(&pp, rng)?;
-
-        // Update the parameters with the generated keys
-        pp.secret_key = Some(secret_key);
-        pp.public_key = public_key;
 
         Ok(pp)
     }
@@ -201,7 +200,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         for (sig, &wt) in signatures.iter().zip(weights.iter()) {
             let weight_scalar = P::ScalarField::from(wt as u64);
             aggregate_signature += sig.signature.mul(weight_scalar);
-            total_value += weight_scalar * sig.value;
+            total_value += weight_scalar.mul(sig.value);
         }
 
         Ok(AggregatedSignature {
@@ -221,10 +220,8 @@ mod tests {
 
     static N: usize = 10; // Define the number of generators
 
-    static PARAMS: Lazy<H2S2Parameters<Bn254>> = Lazy::new(|| {
-        let mut rng = test_rng();
-        NCS::<Bn254, Blake2b512>::setup(&mut rng, N).expect("Setup failed")
-    });
+    static PARAMS: Lazy<H2S2Parameters<Bn254>> =
+        Lazy::new(|| NCS::<Bn254, Blake2b512>::setup(N).expect("Setup failed"));
 
     #[test]
     fn test_setup() {

@@ -13,7 +13,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type AggregatedSignature;
 
     /// Generate one G2 element and `n` G1 elements
-    fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
+    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
 
     /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
     /// allocation_id as a ScalarField
