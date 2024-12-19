@@ -6,6 +6,7 @@ authors = [
   "Severiano Sisneros <severiano@semiotic.ai>",
   "Alexis Asseman <alexis@semiotic.ai>",
   "Tomasz Kornuta <tomasz@semiotic.ai>",
+  "Pedro Bufulin <pedro@semiotic.ai>",
 ]
 license = "Apache-2.0"
 description = ""
