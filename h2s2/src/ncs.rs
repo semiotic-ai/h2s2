@@ -2,13 +2,23 @@ use std::ops::{Add, Mul, MulAssign};
 use std::{error::Error, marker::PhantomData};
 
 use crate::holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme;
+use ark_ec::hashing::curve_maps::wb::WBConfig;
+// use ark_bls12_381::Bn254;
+use ark_ec::hashing::map_to_curve_hasher::{MapToCurve, MapToCurveBasedHasher};
+use ark_ec::hashing::HashToCurveError;
 use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
+use ark_ec::short_weierstrass::Projective;
 use ark_ec::PrimeGroup;
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::field_hashers::{DefaultFieldHasher, HashToField};
 use ark_ff::PrimeField;
 use ark_ff::{BigInteger, UniformRand, Zero};
 use ark_std::rand::Rng;
-use digest::Digest;
+use blake2::Blake2b512;
+use digest::{Digest, FixedOutputReset}; // Use 512-bit Blake2b for digest
+
+use ark_bls12_381::{g1, Config, G1Projective};
+use ark_ec::hashing::{curve_maps::wb::WBMap, HashToCurve};
 
 fn hash_to_g1<P: Pairing, D: Digest>(message_data: Vec<u8>) -> P::G1Affine {
     let mut g1_point: Option<P::G1Affine> = None;
@@ -22,6 +32,31 @@ fn hash_to_g1<P: Pairing, D: Digest>(message_data: Vec<u8>) -> P::G1Affine {
     }
     g1_point.unwrap()
 }
+// fn hash_to_g1<P, D>(message_data: Vec<u8>) -> P::G1Affine
+// where
+//     P: Pairing,
+//     <<P as Pairing>::G1 as CurveGroup>::Config: WBConfig,
+//     D: digest::FixedOutputReset + Default + Clone,
+// {
+//     // Initialize the hash-to-curve hasher for G1 using the dynamic configuration
+//     let hasher = MapToCurveBasedHasher::<
+//         Projective<<P::G1 as CurveGroup>::Config>, // Dynamically resolved G1 curve configuration
+//         DefaultFieldHasher<D, 128>,                // Hash-to-field
+//         WBMap<<P::G1 as CurveGroup>::Config>,      // Map-to-curve
+//     >::new(&[1]) // Domain separation tag or personalization
+//     .expect("Failed to create hash-to-curve hasher");
+
+//     // Hash the input data to a G1 affine point
+//     let point = hasher
+//         .hash(&message_data)
+//         .expect("Failed to hash the message to the curve");
+
+//     // Cast the result to P::G1Affine
+//     point
+// }
+
+// Use SWUMap for BN254 G1 curve mapping
+// type MyMapToCurve = SWUMap<<Bn254 as Pairing>::G1>;
 
 pub struct NCS<P: Pairing, D: Digest> {
     _pairing: PhantomData<P>,
@@ -58,8 +93,8 @@ pub struct AllocationParameters<P: Pairing> {
     pub allocation_id: P::ScalarField,
 }
 
-impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<P, D>
-    for NCS<P, D>
+impl<P: Pairing, D: Digest + FixedOutputReset + Send + Sync>
+    HolographicHomomorphicSignatureScheme<P, D> for NCS<P, D>
 {
     type Parameters = H2S2Parameters<P>;
     type PublicKey = P::G2;
@@ -68,6 +103,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     type Message = P::ScalarField;
     type Weight = usize;
     type AggregatedSignature = AggregatedSignature<P>;
+    type Projective = G1Projective;
 
     // n represents the max_lanes amount
     fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
@@ -210,36 +246,73 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     }
 }
 
-#[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Bn254;
+    use ark_bls12_381::{g1, Config};
+    use ark_ec::{bls12::Bls12, hashing::curve_maps::wb::WBConfig};
+    //we could also use the ark_bls12_381 curve which was intended to substitute this one:
+    //https://docs.rs/ark-bls12-381/latest/ark_bls12_381/
+    // Ethereum is reviewing using it:
+    // https://eips.ethereum.org/EIPS/eip-2537
+    // use ark_bls12_381::Bn254;
     use ark_std::test_rng;
     use blake2::Blake2b512; // Use 512-bit Blake2b for digest
     use once_cell::sync::Lazy;
-
+    type Curve = ark_bls12_381::Bls12_381;
+    type Hasher = blake2::Blake2b512;
     static N: usize = 10; // Define the number of generators
-    static PARAMS: Lazy<H2S2Parameters<Bn254>> = Lazy::new(|| {
+
+    static PARAMS: Lazy<H2S2Parameters<Curve>> = Lazy::new(|| {
         let mut rng = test_rng();
 
-        let mut params = NCS::<Bn254, Blake2b512>::setup(N).expect("Setup failed");
+        let mut params = NCS::<Curve, Hasher>::setup(N).expect("Setup failed");
 
         // Generate the secret and public keys using keygen
-        let (pk, sk) = NCS::<Bn254, Blake2b512>::keygen(&params, &mut rng).expect("Keygen failed");
+        let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
 
         params.secret_key = Some(sk);
         params.public_key = pk;
         params
     });
 
+    // fn hash_message_to_g1(
+    //     message: &[u8],
+    //     domain: &[u8],
+    // ) -> Result<<bls as Pairing>::G1Affine, HashToCurveError> {
+    //     // Create a MapToCurveBasedHasher using the chosen hash-to-field and map-to-curve
+    //     let test_wb_to_curve_hasher = MapToCurveBasedHasher::<
+    //         Projective<WBCurve>,
+    //         DefaultFieldHasher<Sha256, 128>,
+    //         WBMap<WBCurve>,
+    //     >::new(&[1])
+    //     .unwrap();
+
+    //     // Hash the message into a curve point using the standardized method
+    //     let point = hasher.hash(message)?;
+    //     Ok(point)
+    // }
+
     #[test]
     fn test_setup_and_keygen() {
+        // Use the correct WBConfig implementation for G1
+
+        let test_wb_to_curve_hasher = MapToCurveBasedHasher::<
+            Projective<g1::Config>,          // G1 curve configuration
+            DefaultFieldHasher<Hasher, 128>, // Hash-to-field
+            WBMap<g1::Config>,               // Map-to-curve
+        >::new(&[1]) // Domain separation tag or personalization
+        .unwrap();
+
+        let hash_result = test_wb_to_curve_hasher
+            .hash(b"message")
+            .expect("fail to hash the string to curve");
+
         let mut rng = test_rng();
         let n = 10;
 
-        let params = NCS::<Bn254, Blake2b512>::setup(n).expect("Setup failed");
+        let params = NCS::<Curve, Hasher>::setup(n).expect("Setup failed");
 
-        let (pk, sk) = NCS::<Bn254, Blake2b512>::keygen(&params, &mut rng).expect("Keygen failed");
+        let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
 
         assert_eq!(
             params.g1_generators.len(),
@@ -263,7 +336,7 @@ mod tests {
         let params = &*PARAMS;
         let mut rng = test_rng();
         let (hash_aggregate, alloc_id) =
-            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(&params, &mut rng, N).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
         println!("allocation_id {:?}", alloc_id);
@@ -276,20 +349,21 @@ mod tests {
 
         // Precompute the hash aggregate and allocation ID
         let (_, allocation_id) =
-            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(&params, &mut rng, N).expect("Precompute failed");
 
         // Generate messages for each lane/index
-        let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
+        let messages: Vec<ark_bls12_381::Fr> =
+            (0..N).map(|_| ark_bls12_381::Fr::rand(&mut rng)).collect();
 
         // Iterate through indices and sign each message
         for index in 0..N {
             // Sign the message with the current index
             let signature =
-                NCS::<Bn254, Blake2b512>::sign(&params, allocation_id, index, messages[index])
+                NCS::<Curve, Hasher>::sign(&params, allocation_id, index, messages[index])
                     .expect("Sign failed");
 
             // Verify the signature with the same index
-            let is_valid = NCS::<Bn254, Blake2b512>::verify(
+            let is_valid = NCS::<Curve, Hasher>::verify(
                 &params,
                 allocation_id,
                 index,
@@ -314,23 +388,24 @@ mod tests {
         let params = &*PARAMS;
 
         // Generate random messages for each lane/index
-        let messages: Vec<ark_bn254::Fr> = (0..N).map(|_| ark_bn254::Fr::rand(&mut rng)).collect();
+        let messages: Vec<ark_bls12_381::Fr> =
+            (0..N).map(|_| ark_bls12_381::Fr::rand(&mut rng)).collect();
 
         // Precompute the hash aggregate and allocation ID
         let (hash_aggregate, allocation_id) =
-            NCS::<Bn254, Blake2b512>::precompute(&params, &mut rng, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(&params, &mut rng, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)
             .map(|index| {
-                NCS::<Bn254, Blake2b512>::sign(&params, allocation_id, index, messages[index])
+                NCS::<Curve, Hasher>::sign(&params, allocation_id, index, messages[index])
                     .expect("Sign failed")
             })
             .collect();
 
         // Verify each individual signature
         for (index, signature) in signatures.iter().enumerate() {
-            let is_valid = NCS::<Bn254, Blake2b512>::verify(
+            let is_valid = NCS::<Curve, Hasher>::verify(
                 &params,
                 allocation_id,
                 index,
@@ -346,15 +421,12 @@ mod tests {
 
         // Aggregate the signatures
         let aggregated_signature =
-            NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
+            NCS::<Curve, Hasher>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
         // Verify the aggregated signature
-        let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
-            &params,
-            &hash_aggregate,
-            &aggregated_signature,
-        )
-        .expect("Verify failed");
+        let is_valid =
+            NCS::<Curve, Hasher>::verify_aggregate(&params, &hash_aggregate, &aggregated_signature)
+                .expect("Verify failed");
 
         assert!(
             is_valid,
@@ -376,10 +448,10 @@ mod tests {
 
         // Aggregate the signatures, including the duplicate
         let tampered_aggregate_signature =
-            NCS::<Bn254, Blake2b512>::evaluate(&signatures, &weights).expect("Evaluate failed");
+            NCS::<Curve, Hasher>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
         // Verify the aggregated signature with the tampered signature table
-        let is_valid = NCS::<Bn254, Blake2b512>::verify_aggregate(
+        let is_valid = NCS::<Curve, Hasher>::verify_aggregate(
             &params,
             &hash_aggregate,
             &tampered_aggregate_signature,

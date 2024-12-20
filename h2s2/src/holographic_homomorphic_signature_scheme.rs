@@ -1,9 +1,13 @@
 use ark_ec::pairing::Pairing;
 use ark_std::rand::Rng;
-use digest::Digest;
+use digest::{Digest, FixedOutputReset};
 use std::error::Error;
 
-pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + Sync> {
+pub trait HolographicHomomorphicSignatureScheme<
+    P: Pairing,
+    D: FixedOutputReset + Digest + Send + Sync,
+>
+{
     type Parameters;
     type PublicKey;
     type SecretKey;
@@ -11,6 +15,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type Message;
     type Weight;
     type AggregatedSignature;
+    type Projective;
 
     /// Generate one G2 element and `n` G1 elements
     fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
