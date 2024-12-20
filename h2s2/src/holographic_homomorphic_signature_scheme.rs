@@ -17,9 +17,9 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
 
     /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
     /// allocation_id as a ScalarField
-    fn precompute<R: Rng>(
+    fn precompute(
         pp: &Self::Parameters,
-        rng: &mut R,
+        tag: P::ScalarField,
         n: usize,
     ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>>;
 
@@ -51,7 +51,6 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// contained in [`AggregatedSignature`] with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
-        // tag: &[u8],
         hash_aggregate: &P::G1,
         signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>>;
