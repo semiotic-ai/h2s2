@@ -1,82 +1,63 @@
-//nc1
-use crate::ark_std::UniformRand;
-use crate::ark_std::Zero;
-use crate::Error;
-use crate::HomomorphicSignatureScheme;
 use ark_ec::pairing::Pairing;
-use ark_ec::AffineRepr;
-use ark_std::{marker::PhantomData, rand::Rng};
+use ark_std::rand::Rng;
 use digest::Digest;
-use std::ops::MulAssign;
+use std::error::Error;
 
-pub struct HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest> {
-    _pairing: PhantomData<P>,
-    _hash: PhantomData<D>,
-}
+pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + Sync> {
+    type Parameters;
+    type PublicKey;
+    type SecretKey;
+    type Signature;
+    type Message;
+    type Weight;
+    type AggregatedSignature;
 
-#[derive(Clone)]
-pub struct H2S2Parameters<P: Pairing> {
-    pub g1_generators: Vec<P::G1>,
-    pub g2_generator: P::G2,
-}
+    /// Generate one G2 element and `n` G1 elements
+    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
 
-impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme for NC1<P, D> {
-    type Parameters = H2S2Parameters<P>;
-    type PublicKey = P::G2;
-    type SecretKey = P::ScalarField;
-    type Signature = P::G1;
-    type Message = P::ScalarField;
-    type Weight = usize;
-
-    /// Generate G2 element and `n` G1 elements
-    fn setup<R: Rng>(rng: &mut R, n: usize) -> Result<Self::Parameters, Error> {}
-
-    /// Generate hash aggregate (H_a) with `tag` and `n` lanes
-    fn precompute(tag: &[u8], n: usize) -> Result<P::G1, Error> {}
+    /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
+    /// allocation_id as a ScalarField
+    fn precompute(
+        pp: &Self::Parameters,
+        tag: P::ScalarField,
+        n: usize,
+    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
     fn keygen<R: Rng>(
         pp: &Self::Parameters,
         rng: &mut R,
-    ) -> Result<(Self::PublicKey, Self::SecretKey), Error> {
-    }
+    ) -> Result<(Self::PublicKey, Self::SecretKey), Box<dyn Error>>;
 
     /// Sign `message` with `tag` at `index`
     fn sign(
         pp: &Self::Parameters,
-        sk: &Self::SecretKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
-    ) -> Result<Self::Signature, Error> {
-    }
+        tag: P::ScalarField,
+        index: usize,
+        message: Self::Message,
+    ) -> Result<Self::Signature, Box<dyn Error>>;
 
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
+    ///  TODO: index should be restricted to a number from 1 to N (max number of lanes)
     fn verify(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
-        tag: &[u8],
-        index: &[u8],
-        message: &[Self::Message],
+        tag: P::ScalarField,
+        index: usize,
+        message: &Self::Message,
         signature: &Self::Signature,
-    ) -> Result<bool, Error> {
-    }
+    ) -> Result<bool, Box<dyn Error>>;
 
-    /// Verify aggregate `signature` matches `message_aggregate` with `tag` and `hash_aggregate`using `pp` parameter and `pk` public key
+    /// Verify aggregate `signature` matches `message_aggregate`
+    /// contained in [`AggregatedSignature`] with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
-        pk: &Self::PublicKey,
-        tag: &[u8],
-        message_aggregate: &[Self::Message],
         hash_aggregate: &P::G1,
-        signature: &Self::Signature,
-    ) -> Result<bool, Error> {
-    }
+        signature: &Self::AggregatedSignature,
+    ) -> Result<bool, Box<dyn Error>>;
 
     /// Aggregate `signatures` with `weights`
     fn evaluate(
         signatures: &[Self::Signature],
         weights: &[Self::Weight],
-    ) -> Result<Self::Signature, Error> {
-    }
+    ) -> Result<Self::AggregatedSignature, Box<dyn Error>>;
 }
