@@ -13,15 +13,11 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type AggregatedSignature;
 
     /// Generate one G2 element and `n` G1 elements
-    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
+    fn setup(n: usize, tag: P::ScalarField) -> Result<Self::Parameters, Box<dyn Error>>;
 
-    /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
-    /// allocation_id as a ScalarField
-    fn precompute(
-        pp: &Self::Parameters,
-        tag: P::ScalarField,
-        n: usize,
-    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>>;
+    /// Precompute `aggregate_hash` using H2S2 instance parameters
+    fn precompute(pp: &Self::Parameters, weights: &[Self::Weight])
+        -> Result<P::G1, Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
     fn keygen<R: Rng>(
@@ -32,30 +28,27 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Sign `message` with `tag` at `index`
     fn sign(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: Self::Message,
     ) -> Result<Self::Signature, Box<dyn Error>>;
 
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
-    ///  TODO: index should be restricted to a number from 1 to N (max number of lanes)
     fn verify(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: &Self::Message,
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    /// Verify aggregate `signature` matches `message_aggregate`
-    /// contained in [`AggregatedSignature`] with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
+    /// Verify an aggregate `signature` using a pre-computed `hash_aggregate` with `tag` using `pp`
+    /// parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
         hash_aggregate: &P::G1,
         signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    /// Aggregate `signatures` with `weights`
+    /// Calculate an aggregate signature using `signatures` and `weights`
     fn evaluate(
         signatures: &[Self::Signature],
         weights: &[Self::Weight],
