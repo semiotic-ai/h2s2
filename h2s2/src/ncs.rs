@@ -205,17 +205,12 @@ mod tests {
 
     use super::*;
     use ark_bn254::Bn254;
-    //we could also use the ark_bls12_381 curve which was intended to substitute this one:
-    //https://docs.rs/ark-bls12-381/latest/ark_bls12_381/
-    // Ethereum is reviewing using it:
-    // https://eips.ethereum.org/EIPS/eip-2537
-    // use ark_bls12_381::Bn254;
     use ark_std::test_rng;
     use once_cell::sync::Lazy;
     type Curve = Bn254;
     type Fr = ark_bn254::Fr;
     type Hasher = blake2::Blake2b512;
-    static N: usize = 1; // Define the number of generators
+    static N: usize = 32; // Define the number of generators
 
     static PARAMS: Lazy<H2S2Parameters<Curve>> = Lazy::new(|| {
         let mut rng = test_rng();
