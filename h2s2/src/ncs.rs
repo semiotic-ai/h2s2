@@ -90,7 +90,6 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         n: usize,
     ) -> Result<P::G1, Box<dyn Error>> {
         let hash_vec = (0..n)
-            .into_iter()
             .map(|index| {
                 let mut message_data = tag.into_bigint().to_bytes_be();
                 message_data.append(&mut index.to_be_bytes().to_vec());
@@ -127,11 +126,11 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         lane_data.append(&mut index.to_be_bytes().to_vec());
         let lane_point = hash_to_g1::<P, D>(lane_data);
 
-        let mut value_point = pp.g1_generators[0].clone();
+        let mut value_point = pp.g1_generators[0];
         value_point.mul_assign(message);
 
         let message_point = lane_point.into_group() + value_point;
-        let mut signature = message_point.clone();
+        let mut signature = message_point;
         signature.mul_assign(pp.secret_key.unwrap());
         Ok(Signature {
             signature,
@@ -151,7 +150,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         lane_data.append(&mut index.to_be_bytes().to_vec());
         let lane_point = hash_to_g1::<P, D>(lane_data);
 
-        let mut value_point = pp.g1_generators[0].clone();
+        let mut value_point = pp.g1_generators[0];
         value_point.mul_assign(message);
 
         let rhs_pairing = P::pairing(lane_point.into_group() + value_point, pp.public_key);
@@ -165,7 +164,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>> {
         let lane_point = aggregate_hash;
-        let mut value_point = pp.g1_generators[0].clone();
+        let mut value_point = pp.g1_generators[0];
         value_point.mul_assign(signature.total_value);
 
         let rhs_pairing = P::pairing(lane_point.add(value_point), pp.public_key);
@@ -237,7 +236,7 @@ mod tests {
 
         let params = &*PARAMS; // Explicit reference to PARAMS
 
-        let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
+        let (pk, sk) = NCS::<Curve, Hasher>::keygen(params, &mut rng).expect("Keygen failed");
 
         assert_eq!(
             params.g1_generators.len(),
@@ -260,12 +259,12 @@ mod tests {
     fn test_precompute() {
         let params = &*PARAMS;
 
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params, tag, N).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", aggregate_hash);
-        println!("allocation_id {:?}", tag);
+        println!("tag {:?}", tag);
     }
 
     #[test]
@@ -273,22 +272,22 @@ mod tests {
         let mut rng = test_rng();
         let params = &*PARAMS;
 
-        // Precompute the hash aggregate and allocation ID
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        // Calculate tag 
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
 
         // Generate messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
 
         // Iterate through indices and sign each message
-        for index in 0..N {
+        messages.iter().enumerate().for_each(|(index, message)| {
             // Sign the message with the current index
             let signature =
-                NCS::<Curve, Hasher>::sign(&params, tag, index, messages[index])
+                NCS::<Curve, Hasher>::sign(params, tag, index, *message)
                     .expect("Sign failed");
 
             // Verify the signature with the same index
             let is_valid = NCS::<Curve, Hasher>::verify(
-                &params,
+                params,
                 tag,
                 index,
                 &messages[index],
@@ -301,7 +300,7 @@ mod tests {
                 "Signature verification failed for index {}!",
                 index
             );
-        }
+        });
 
         println!("All signatures successfully verified for indices 0..{}!", N);
     }
@@ -315,14 +314,14 @@ mod tests {
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
 
         // Precompute the hash aggregate and tag 
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params, tag, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)
             .map(|index| {
-                NCS::<Curve, Hasher>::sign(&params, tag, index, messages[index])
+                NCS::<Curve, Hasher>::sign(params, tag, index, messages[index])
                     .expect("Sign failed")
             })
             .collect();
@@ -330,7 +329,7 @@ mod tests {
         // Verify each individual signature
         for (index, signature) in signatures.iter().enumerate() {
             let is_valid = NCS::<Curve, Hasher>::verify(
-                &params,
+                params,
                 tag,
                 index,
                 &messages[index],
@@ -349,7 +348,7 @@ mod tests {
 
         // Verify the aggregated signature
         let is_valid =
-            NCS::<Curve, Hasher>::verify_aggregate(&params, &aggregate_hash, &aggregated_signature)
+            NCS::<Curve, Hasher>::verify_aggregate(params, &aggregate_hash, &aggregated_signature)
                 .expect("Verify failed");
 
         assert!(
@@ -376,7 +375,7 @@ mod tests {
 
         // Verify the aggregated signature with the tampered signature table
         let is_valid = NCS::<Curve, Hasher>::verify_aggregate(
-            &params,
+            params,
             &aggregate_hash,
             &tampered_aggregate_signature,
         )
