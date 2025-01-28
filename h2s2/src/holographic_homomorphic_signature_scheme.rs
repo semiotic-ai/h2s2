@@ -15,8 +15,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Generate one G2 element and `n` G1 elements
     fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
 
-    /// Generate hash aggregate (H_a) with `tag` and `n` lanes, and a
-    /// allocation_id as a ScalarField
+    /// Precompute `aggregate_hash` with `tag` and `n` lanes
     fn precompute(
         pp: &Self::Parameters,
         tag: P::ScalarField,
@@ -46,15 +45,15 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    /// Verify aggregate `signature` matches `message_aggregate`
-    /// contained in [`AggregatedSignature`] with `tag` and `hash_aggregate` using `pp` parameter and `pk` public key
+    /// Verify an aggregate `signature` using a pre-computed `hash_aggregate` with `tag` using `pp`
+    /// parameter and `pk` public key
     fn verify_aggregate(
         pp: &Self::Parameters,
         hash_aggregate: &P::G1,
         signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>>;
 
-    /// Aggregate `signatures` with `weights`
+    /// Calculate an aggregate signature using `signatures` and `weights`
     fn evaluate(
         signatures: &[Self::Signature],
         weights: &[Self::Weight],

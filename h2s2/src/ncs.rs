@@ -23,19 +23,25 @@ fn hash_to_g1<P: Pairing, D: Digest>(message_data: Vec<u8>) -> P::G1Affine {
     g1_point.unwrap()
 }
 
+/// H2S2 instantiated with [NCS1](https://eprint.iacr.org/2008/316.pdf) scheme.
 pub struct NCS<P: Pairing, D: Digest> {
     _pairing: PhantomData<P>,
     _hash: PhantomData<D>,
 }
 
+/// Parameters for the H2S2 scheme.
+/// This implementation is based on the [NCS1](https://eprint.iacr.org/2008/316.pdf) scheme.
+/// We additionally include a `max_size` parameter to enable precomputation for efficient on-chain
+/// verification.
 pub struct H2S2Parameters<P: Pairing> {
     pub g1_generators: Vec<P::G1>,
     pub g2_generator: P::G2,
     pub public_key: P::G2,
     pub secret_key: Option<P::ScalarField>,
-    pub max_lanes: usize,
+    pub max_size: usize,
 }
 
+/// A signature for a single `index` and `value` pair.
 #[derive(Clone)]
 pub struct Signature<P: Pairing> {
     pub signature: P::G1,
@@ -43,6 +49,7 @@ pub struct Signature<P: Pairing> {
     pub value: P::ScalarField,
 }
 
+/// A aggregated signature using `max_size` unique `index`s.
 #[derive(Clone)]
 pub struct AggregatedSignature<P: Pairing> {
     pub signature: P::G1,
@@ -78,7 +85,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
             g2_generator,
             secret_key: Some(P::ScalarField::zero()), 
             public_key: P::G2::zero(),                
-            max_lanes: n,
+            max_size: n,
         };
 
         Ok(pp)
@@ -243,7 +250,7 @@ mod tests {
             1,
             "Incorrect number of G1 generators"
         );
-        assert_eq!(params.max_lanes, n, "Max lanes value 'mismatch");
+        assert_eq!(params.max_size, n, "Max lanes value 'mismatch");
 
         // Verify the public key matches the secret key and G2 generator relationship
         let calculated_public_key = params.g2_generator.mul(sk);
