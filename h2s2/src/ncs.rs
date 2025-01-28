@@ -31,9 +31,6 @@ pub struct NCS<P: Pairing, D: Digest> {
 pub struct H2S2Parameters<P: Pairing> {
     pub g1_generators: Vec<P::G1>,
     pub g2_generator: P::G2,
-    // this public_key is the `u` param in the notes.
-    // both the indexer and verifier need it. The secret key
-    // remains with the gateway
     pub public_key: P::G2,
     pub secret_key: Option<P::ScalarField>,
     pub max_lanes: usize,
@@ -42,7 +39,7 @@ pub struct H2S2Parameters<P: Pairing> {
 #[derive(Clone)]
 pub struct Signature<P: Pairing> {
     pub signature: P::G1,
-    pub lane_id: usize,
+    pub index: usize,
     pub value: P::ScalarField,
 }
 
@@ -52,11 +49,6 @@ pub struct AggregatedSignature<P: Pairing> {
     pub total_value: P::ScalarField,
 }
 
-#[derive(Clone)]
-pub struct AllocationParameters<P: Pairing> {
-    pub allocation_hash: P::G1,
-    pub allocation_id: P::ScalarField,
-}
 
 impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<P, D>
     for NCS<P, D>
@@ -84,17 +76,14 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         let pp: H2S2Parameters<P> = H2S2Parameters {
             g1_generators,
             g2_generator,
-            secret_key: Some(P::ScalarField::zero()), // Temporary placeholder
-            public_key: P::G2::zero(),                // Temporary placeholder
+            secret_key: Some(P::ScalarField::zero()), 
+            public_key: P::G2::zero(),                
             max_lanes: n,
         };
 
         Ok(pp)
     }
 
-    //TODO: allocationn_ids (tag in this case) must be unpredictable
-    // some random value has to be appended during initialization, prior
-    // to the precompute in this function
     fn precompute(
         _pp: &Self::Parameters,
         tag: P::ScalarField,
@@ -102,9 +91,9 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>> {
         let hash_vec = (0..n)
             .into_iter()
-            .map(|lane_id| {
+            .map(|index| {
                 let mut message_data = tag.into_bigint().to_bytes_be();
-                message_data.append(&mut lane_id.to_be_bytes().to_vec());
+                message_data.append(&mut index.to_be_bytes().to_vec());
                 hash_to_g1::<P, D>(message_data)
             })
             .collect::<Vec<_>>();
@@ -146,7 +135,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         signature.mul_assign(pp.secret_key.unwrap());
         Ok(Signature {
             signature,
-            lane_id: index,
+            index,
             value: message,
         })
     }
@@ -172,10 +161,10 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn verify_aggregate(
         pp: &Self::Parameters,
-        hash_aggregate: &P::G1,
+        aggregate_hash: &P::G1,
         signature: &Self::AggregatedSignature,
     ) -> Result<bool, Box<dyn Error>> {
-        let lane_point = hash_aggregate;
+        let lane_point = aggregate_hash;
         let mut value_point = pp.g1_generators[0].clone();
         value_point.mul_assign(signature.total_value);
 
@@ -271,12 +260,12 @@ mod tests {
     fn test_precompute() {
         let params = &*PARAMS;
 
-        let allocation_id = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
-        let (hash_aggregate, alloc_id) =
-            NCS::<Curve, Hasher>::precompute(&params, allocation_id, N).expect("Precompute failed");
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        let (hash_aggregate, tag) =
+            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
-        println!("allocation_id {:?}", alloc_id);
+        println!("allocation_id {:?}", tag);
     }
 
     #[test]
@@ -285,9 +274,9 @@ mod tests {
         let params = &*PARAMS;
 
         // Precompute the hash aggregate and allocation ID
-        let allocation_id = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
         let (_, allocation_id) =
-            NCS::<Curve, Hasher>::precompute(&params, allocation_id, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
         // Generate messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
@@ -327,15 +316,15 @@ mod tests {
         // Generate random messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
 
-        // Precompute the hash aggregate and allocation ID
-        let allocation_id = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
-        let (hash_aggregate, allocation_id) =
-            NCS::<Curve, Hasher>::precompute(&params, allocation_id, N).expect("Precompute failed");
+        // Precompute the hash aggregate and tag 
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
+        let (hash_aggregate, tag) =
+            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)
             .map(|index| {
-                NCS::<Curve, Hasher>::sign(&params, allocation_id, index, messages[index])
+                NCS::<Curve, Hasher>::sign(&params, tag, index, messages[index])
                     .expect("Sign failed")
             })
             .collect();
@@ -344,7 +333,7 @@ mod tests {
         for (index, signature) in signatures.iter().enumerate() {
             let is_valid = NCS::<Curve, Hasher>::verify(
                 &params,
-                allocation_id,
+                tag,
                 index,
                 &messages[index],
                 signature,
