@@ -34,6 +34,7 @@ pub struct NCS<P: Pairing, D: Digest> {
 /// We additionally include a `max_size` parameter to enable precomputation for efficient on-chain
 /// verification.
 pub struct H2S2Parameters<P: Pairing> {
+    pub tag: P::ScalarField,
     pub g1_generators: Vec<P::G1>,
     pub g2_generator: P::G2,
     pub public_key: P::G2,
@@ -69,18 +70,23 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     type AggregatedSignature = AggregatedSignature<P>;
 
     // n represents the max_lanes amount
-    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>> {
+    fn setup(n: usize, tag: P::ScalarField) -> Result<Self::Parameters, Box<dyn Error>> {
         // Use the hardcoded G2 generator from the Pairing trait
         let g2_generator = P::G2::generator();
 
         // Generate a deterministic set of G1 generators based on the hardcoded G1 generator
-        let g1_base_generator = P::G1::generator();
-        // In practice, we only ever use the first g1 generator
-        // so it is going to be generated only g1[0]
-        let g1_generators = vec![g1_base_generator];
+        let mut g1_generators= vec![P::G1::generator()];
+        for index in 0..n {
+                let mut message_data = tag.into_bigint().to_bytes_be();
+                message_data.append(&mut index.to_be_bytes().to_vec());
+                g1_generators.push(hash_to_g1::<P, D>(message_data).into())
+            };
+            
+
 
         // Initialize parameters without secret/public keys
         let pp: H2S2Parameters<P> = H2S2Parameters {
+            tag,
             g1_generators,
             g2_generator,
             secret_key: Some(P::ScalarField::zero()), 
@@ -92,20 +98,13 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
     }
 
     fn precompute(
-        _pp: &Self::Parameters,
-        tag: P::ScalarField,
+        pp: &Self::Parameters,
         n: usize,
     ) -> Result<P::G1, Box<dyn Error>> {
-        let hash_vec = (0..n)
-            .map(|index| {
-                let mut message_data = tag.into_bigint().to_bytes_be();
-                message_data.append(&mut index.to_be_bytes().to_vec());
-                hash_to_g1::<P, D>(message_data)
-            })
-            .collect::<Vec<_>>();
         let mut aggregate_hash= P::G1::zero();
-        for hash_val in hash_vec {
-            aggregate_hash += hash_val;
+        let lane_points = &pp.g1_generators[1..];
+        for point in lane_points{
+            aggregate_hash += point;
         }
         Ok(aggregate_hash)
     }
@@ -125,18 +124,15 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn sign(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: <P as Pairing>::ScalarField,
     ) -> Result<Self::Signature, Box<dyn Error>> {
-        let mut lane_data = tag.into_bigint().to_bytes_be();
-        lane_data.append(&mut index.to_be_bytes().to_vec());
-        let lane_point = hash_to_g1::<P, D>(lane_data);
+        let index_point = pp.g1_generators[index];
 
         let mut value_point = pp.g1_generators[0];
         value_point.mul_assign(message);
 
-        let message_point = lane_point.into_group() + value_point;
+        let message_point = index_point + value_point;
         let mut signature = message_point;
         signature.mul_assign(pp.secret_key.unwrap());
         Ok(Signature {
@@ -148,21 +144,22 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn verify(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: &Self::Message,
         signature: &Self::Signature,
     ) -> Result<bool, Box<dyn Error>> {
-        let mut lane_data = tag.into_bigint().to_bytes_be();
-        lane_data.append(&mut index.to_be_bytes().to_vec());
-        let lane_point = hash_to_g1::<P, D>(lane_data);
+        if (1..=pp.max_size).contains(&index) {
+            let lane_point = pp.g1_generators[index];
 
-        let mut value_point = pp.g1_generators[0];
-        value_point.mul_assign(message);
+            let mut value_point = pp.g1_generators[0];
+            value_point.mul_assign(message);
 
-        let rhs_pairing = P::pairing(lane_point.into_group() + value_point, pp.public_key);
-        let lhs_pairing = P::pairing(signature.signature, pp.g2_generator);
-        Ok(lhs_pairing == rhs_pairing)
+            let rhs_pairing = P::pairing(lane_point + value_point, pp.public_key);
+            let lhs_pairing = P::pairing(signature.signature, pp.g2_generator);
+            Ok(lhs_pairing == rhs_pairing)
+        } else {
+            Err(format!("Value {} is out of range [{}, {}]", index, 1, pp.max_size).into())
+        }
     }
 
     fn verify_aggregate(
@@ -219,12 +216,13 @@ mod tests {
     type Curve = Bn254;
     type Fr = ark_bn254::Fr;
     type Hasher = blake2::Blake2b512;
-    static N: usize = 10; // Define the number of generators
+    static N: usize = 1; // Define the number of generators
 
     static PARAMS: Lazy<H2S2Parameters<Curve>> = Lazy::new(|| {
         let mut rng = test_rng();
 
-        let mut params = NCS::<Curve, Hasher>::setup(N).expect("Setup failed");
+        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
+        let mut params = NCS::<Curve, Hasher>::setup(N, tag).expect("Setup failed");
 
         // Generate the secret and public keys using keygen
         let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
@@ -234,12 +232,13 @@ mod tests {
         params
     });
 
+
     #[test]
     fn test_setup_and_keygen() {
         // Use the correct WBConfig implementation for G1
 
         let mut rng = test_rng();
-        let n = 10;
+        let n = N;
 
         let params = &*PARAMS; // Explicit reference to PARAMS
 
@@ -247,7 +246,7 @@ mod tests {
 
         assert_eq!(
             params.g1_generators.len(),
-            1,
+            n+1,
             "Incorrect number of G1 generators"
         );
         assert_eq!(params.max_size, n, "Max lanes value 'mismatch");
@@ -266,12 +265,10 @@ mod tests {
     fn test_precompute() {
         let params = &*PARAMS;
 
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(params, tag, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params, N).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", aggregate_hash);
-        println!("tag {:?}", tag);
     }
 
     #[test]
@@ -279,8 +276,6 @@ mod tests {
         let mut rng = test_rng();
         let params = &*PARAMS;
 
-        // Calculate tag 
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
 
         // Generate messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
@@ -289,14 +284,13 @@ mod tests {
         messages.iter().enumerate().for_each(|(index, message)| {
             // Sign the message with the current index
             let signature =
-                NCS::<Curve, Hasher>::sign(params, tag, index, *message)
+                NCS::<Curve, Hasher>::sign(params, index+1, *message)
                     .expect("Sign failed");
 
             // Verify the signature with the same index
             let is_valid = NCS::<Curve, Hasher>::verify(
                 params,
-                tag,
-                index,
+                index+1,
                 &messages[index],
                 &signature,
             )
@@ -320,15 +314,17 @@ mod tests {
         // Generate random messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
 
+        // Generate weights (all set to 1 for uniform aggregation)
+        let weights: Vec<usize> = vec![1; N];
+
         // Precompute the hash aggregate and tag 
-        let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(params, tag, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)
             .map(|index| {
-                NCS::<Curve, Hasher>::sign(params, tag, index, messages[index])
+                NCS::<Curve, Hasher>::sign(params, index+1, messages[index])
                     .expect("Sign failed")
             })
             .collect();
@@ -337,17 +333,13 @@ mod tests {
         for (index, signature) in signatures.iter().enumerate() {
             let is_valid = NCS::<Curve, Hasher>::verify(
                 params,
-                tag,
-                index,
+                index+1,
                 &messages[index],
                 signature,
             )
             .expect("Verify failed");
             assert!(is_valid, "Invalid signature for index {}!", index);
         }
-
-        // Generate weights (all set to 1 for uniform aggregation)
-        let weights: Vec<usize> = vec![1; N];
 
         // Aggregate the signatures
         let aggregated_signature =

@@ -13,12 +13,11 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     type AggregatedSignature;
 
     /// Generate one G2 element and `n` G1 elements
-    fn setup(n: usize) -> Result<Self::Parameters, Box<dyn Error>>;
+    fn setup(n: usize, tag: P::ScalarField) -> Result<Self::Parameters, Box<dyn Error>>;
 
     /// Precompute `aggregate_hash` with `tag` and `n` lanes
     fn precompute(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         n: usize,
     ) -> Result<P::G1, Box<dyn Error>>;
 
@@ -31,7 +30,6 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Sign `message` with `tag` at `index`
     fn sign(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: Self::Message,
     ) -> Result<Self::Signature, Box<dyn Error>>;
@@ -39,7 +37,6 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
     fn verify(
         pp: &Self::Parameters,
-        tag: P::ScalarField,
         index: usize,
         message: &Self::Message,
         signature: &Self::Signature,
