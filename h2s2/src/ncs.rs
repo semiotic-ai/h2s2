@@ -94,12 +94,17 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         Ok(pp)
     }
 
-    fn precompute(pp: &Self::Parameters) -> Result<P::G1, Box<dyn Error>> {
-        let mut aggregate_hash = P::G1::zero();
+    fn precompute(
+        pp: &Self::Parameters,
+        weights: &[Self::Weight],
+    ) -> Result<P::G1, Box<dyn Error>> {
         let lane_points = &pp.g1_generators[1..];
-        for point in lane_points {
-            aggregate_hash += point;
-        }
+        let aggregate_hash = lane_points
+            .iter()
+            .zip(weights.iter())
+            .fold(P::G1::zero(), |acc, (point, &weight)| {
+                acc + point.mul(P::ScalarField::from(weight as u64))
+            });
         Ok(aggregate_hash)
     }
 
@@ -253,7 +258,11 @@ mod tests {
     fn test_precompute() {
         let params = &*PARAMS;
 
-        let aggregate_hash = NCS::<Curve, Hasher>::precompute(params).expect("Precompute failed");
+        // Generate weights (all set to 1 for uniform aggregation)
+        let weights: Vec<usize> = vec![1; N];
+
+        let aggregate_hash =
+            NCS::<Curve, Hasher>::precompute(params, &weights).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", aggregate_hash);
     }
@@ -299,7 +308,8 @@ mod tests {
         let weights: Vec<usize> = vec![1; N];
 
         // Precompute the hash aggregate and tag
-        let aggregate_hash = NCS::<Curve, Hasher>::precompute(params).expect("Precompute failed");
+        let aggregate_hash =
+            NCS::<Curve, Hasher>::precompute(params, &weights).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)
