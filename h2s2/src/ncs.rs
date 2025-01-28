@@ -99,7 +99,6 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
 
     fn precompute(
         pp: &Self::Parameters,
-        n: usize,
     ) -> Result<P::G1, Box<dyn Error>> {
         let mut aggregate_hash= P::G1::zero();
         let lane_points = &pp.g1_generators[1..];
@@ -266,7 +265,7 @@ mod tests {
         let params = &*PARAMS;
 
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(params, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params).expect("Precompute failed");
 
         println!("Precomputed Hash Aggregate: {:?}", aggregate_hash);
     }
@@ -319,7 +318,7 @@ mod tests {
 
         // Precompute the hash aggregate and tag 
         let aggregate_hash=
-            NCS::<Curve, Hasher>::precompute(params, N).expect("Precompute failed");
+            NCS::<Curve, Hasher>::precompute(params).expect("Precompute failed");
 
         // Generate individual signatures for each message
         let mut signatures: Vec<_> = (0..N)

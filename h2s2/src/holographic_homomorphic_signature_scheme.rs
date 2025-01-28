@@ -15,10 +15,9 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     /// Generate one G2 element and `n` G1 elements
     fn setup(n: usize, tag: P::ScalarField) -> Result<Self::Parameters, Box<dyn Error>>;
 
-    /// Precompute `aggregate_hash` with `tag` and `n` lanes
+    /// Precompute `aggregate_hash` using H2S2 instance parameters 
     fn precompute(
         pp: &Self::Parameters,
-        n: usize,
     ) -> Result<P::G1, Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
