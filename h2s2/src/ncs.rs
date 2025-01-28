@@ -88,7 +88,7 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
         _pp: &Self::Parameters,
         tag: P::ScalarField,
         n: usize,
-    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>> {
+    ) -> Result<P::G1, Box<dyn Error>> {
         let hash_vec = (0..n)
             .into_iter()
             .map(|index| {
@@ -97,11 +97,11 @@ impl<P: Pairing, D: Digest + Send + Sync> HolographicHomomorphicSignatureScheme<
                 hash_to_g1::<P, D>(message_data)
             })
             .collect::<Vec<_>>();
-        let mut allocation_hash = P::G1::zero();
+        let mut aggregate_hash= P::G1::zero();
         for hash_val in hash_vec {
-            allocation_hash += hash_val;
+            aggregate_hash += hash_val;
         }
-        Ok((allocation_hash, tag))
+        Ok(aggregate_hash)
     }
 
     fn keygen<R: Rng>(
@@ -261,10 +261,10 @@ mod tests {
         let params = &*PARAMS;
 
         let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
-        let (hash_aggregate, tag) =
+        let aggregate_hash=
             NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
-        println!("Precomputed Hash Aggregate: {:?}", hash_aggregate);
+        println!("Precomputed Hash Aggregate: {:?}", aggregate_hash);
         println!("allocation_id {:?}", tag);
     }
 
@@ -275,8 +275,6 @@ mod tests {
 
         // Precompute the hash aggregate and allocation ID
         let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
-        let (_, allocation_id) =
-            NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
         // Generate messages for each lane/index
         let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
@@ -285,13 +283,13 @@ mod tests {
         for index in 0..N {
             // Sign the message with the current index
             let signature =
-                NCS::<Curve, Hasher>::sign(&params, allocation_id, index, messages[index])
+                NCS::<Curve, Hasher>::sign(&params, tag, index, messages[index])
                     .expect("Sign failed");
 
             // Verify the signature with the same index
             let is_valid = NCS::<Curve, Hasher>::verify(
                 &params,
-                allocation_id,
+                tag,
                 index,
                 &messages[index],
                 &signature,
@@ -318,7 +316,7 @@ mod tests {
 
         // Precompute the hash aggregate and tag 
         let tag = ark_bn254::Fr::from_be_bytes_mod_order(&Hasher::digest(&b"test"));
-        let (hash_aggregate, tag) =
+        let aggregate_hash=
             NCS::<Curve, Hasher>::precompute(&params, tag, N).expect("Precompute failed");
 
         // Generate individual signatures for each message
@@ -351,7 +349,7 @@ mod tests {
 
         // Verify the aggregated signature
         let is_valid =
-            NCS::<Curve, Hasher>::verify_aggregate(&params, &hash_aggregate, &aggregated_signature)
+            NCS::<Curve, Hasher>::verify_aggregate(&params, &aggregate_hash, &aggregated_signature)
                 .expect("Verify failed");
 
         assert!(
@@ -379,7 +377,7 @@ mod tests {
         // Verify the aggregated signature with the tampered signature table
         let is_valid = NCS::<Curve, Hasher>::verify_aggregate(
             &params,
-            &hash_aggregate,
+            &aggregate_hash,
             &tampered_aggregate_signature,
         )
         .expect("Verify failed");

@@ -21,7 +21,7 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
         pp: &Self::Parameters,
         tag: P::ScalarField,
         n: usize,
-    ) -> Result<(P::G1, P::ScalarField), Box<dyn Error>>;
+    ) -> Result<P::G1, Box<dyn Error>>;
 
     /// Generate private and public receipt keys using `pp` parameters from `setup`
     fn keygen<R: Rng>(
@@ -38,7 +38,6 @@ pub trait HolographicHomomorphicSignatureScheme<P: Pairing, D: Digest + Send + S
     ) -> Result<Self::Signature, Box<dyn Error>>;
 
     /// Verify a single `signature` matches `message` with `tag` at `index` using `pp` parameter and `pk` public key
-    ///  TODO: index should be restricted to a number from 1 to N (max number of lanes)
     fn verify(
         pp: &Self::Parameters,
         tag: P::ScalarField,
