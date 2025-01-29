@@ -28,13 +28,19 @@ fn benchmark_sign(c: &mut Criterion) {
     let message = Fr::rand(&mut rng);
     let index = 1;
 
-    c.bench_with_input(BenchmarkId::new("sign", index), &index, |b, &idx| {
+    // Benchmark group setup with sample size
+    let mut group = c.benchmark_group("sign_group");
+    group.sample_size(100); // Set the sample size to 100
+    group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
+
+    group.bench_with_input(BenchmarkId::new("sign", index), &index, |b, &idx| {
         b.iter(|| {
             let signature = NCS::<Curve, Hasher>::sign(black_box(&params), idx, black_box(message))
                 .expect("Sign failed");
             black_box(signature); // Prevent compiler optimizations
         });
     });
+    group.finish();
 }
 
 fn benchmark_verify(c: &mut Criterion) {
@@ -50,7 +56,12 @@ fn benchmark_verify(c: &mut Criterion) {
     let index = 1;
     let signature = NCS::<Curve, Hasher>::sign(&params, index, message).expect("Sign failed");
 
-    c.bench_with_input(BenchmarkId::new("verify", index), &index, |b, &idx| {
+    // Benchmark group setup with sample size
+    let mut group = c.benchmark_group("verify_group");
+    group.sample_size(100); // Set the sample size to 100
+    group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
+
+    group.bench_with_input(BenchmarkId::new("verify", index), &index, |b, &idx| {
         b.iter(|| {
             let result = NCS::<Curve, Hasher>::verify(
                 black_box(&params),
@@ -61,17 +72,18 @@ fn benchmark_verify(c: &mut Criterion) {
             assert!(result.unwrap());
         });
     });
+    group.finish();
 }
 
 fn benchmark_verify_aggregate(c: &mut Criterion) {
     let mut rng = test_rng();
     let tag = Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
     let mut params = NCS::<Curve, Hasher>::setup(N, tag).expect("Setup failed");
+    let index = 1;
 
     let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
     params.secret_key = Some(sk);
     params.public_key = pk;
-
     let messages: Vec<Fr> = (0..N).map(|_| Fr::rand(&mut rng)).collect();
     let weights: Vec<usize> = vec![1; N];
 
@@ -89,22 +101,33 @@ fn benchmark_verify_aggregate(c: &mut Criterion) {
     let aggregated_signature =
         NCS::<Curve, Hasher>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
-    c.bench_function("verify_aggregate", |b| {
-        b.iter(|| {
-            let result = NCS::<Curve, Hasher>::verify_aggregate(
-                black_box(&params),
-                black_box(&aggregate_hash),
-                black_box(&aggregated_signature),
-            );
-            assert!(result.unwrap());
-        });
-    });
+    // Benchmark group setup with sample size
+    let mut group = c.benchmark_group("verify_aggregate_group");
+    group.sample_size(100); // Set the sample size to 100
+    group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
+
+    group.bench_with_input(
+        BenchmarkId::new("verify_aggregate", 1),
+        &index,
+        |b, &_idx| {
+            b.iter(|| {
+                let result = NCS::<Curve, Hasher>::verify_aggregate(
+                    black_box(&params),
+                    black_box(&aggregate_hash),
+                    black_box(&aggregated_signature),
+                );
+                assert!(result.unwrap());
+            });
+        },
+    );
+    group.finish();
 }
 
 fn benchmark_evaluate(c: &mut Criterion) {
     let mut rng = test_rng();
     let tag = Fr::from_be_bytes_mod_order(&Hasher::digest(b"test"));
     let mut params = NCS::<Curve, Hasher>::setup(N, tag).expect("Setup failed");
+    let index = 1;
 
     let (pk, sk) = NCS::<Curve, Hasher>::keygen(&params, &mut rng).expect("Keygen failed");
     params.secret_key = Some(sk);
@@ -121,13 +144,19 @@ fn benchmark_evaluate(c: &mut Criterion) {
         })
         .collect();
 
-    c.bench_function("evaluate", |b| {
+    // Benchmark group setup with sample size
+    let mut group = c.benchmark_group("evaluate_group");
+    group.sample_size(100); // Set the sample size to 100
+    group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
+
+    group.bench_with_input(BenchmarkId::new("evaluate", 1), &index, |b, &_idx| {
         b.iter(|| {
             let result =
                 NCS::<Curve, Hasher>::evaluate(black_box(&signatures), black_box(&weights));
             assert!(result.is_ok());
         });
     });
+    group.finish();
 }
 
 criterion_group!(
