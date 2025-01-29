@@ -6,6 +6,9 @@ Homomorphic signatures allow for the aggregation of multiple signatures into a s
 
 A hologrophic homomorphic signature scheme uses a precomputation step to make the aggregate verification process more efficient. See this white paper for more detail.
 
+A note on the name `Holographic`. We were inspired by [Marlin](https://eprint.iacr.org/2019/1047.pdf), which uses precomputed commitments to a circuit to be evaluated in a zkSNARK. This seems analogous to our approach of precomputing the aggregate hash for the table used in a homomorphic signature scheme. As we were working on this, we found a similar approach published in 2014 by [Catalano, Fiore, and Warinchi](https://eprint.iacr.org/2014/469.pdf) which they call Homomorphic Signatures with Efficient Verification.  
+
+
 This library is implemented using the `ark-works` cryptographic ecosystem and provides an extensible trait for other signature schemes that follow a similar design.
 
 ---
@@ -13,25 +16,28 @@ This library is implemented using the `ark-works` cryptographic ecosystem and pr
 ## How It Works
 It is helpful to think of homomorphic signatures as signing a table of data. A signer will sign messages corresponding to the rows of a table, each table must have a unique `tag` to distinguish signatures from other tables. Each row can is assigned a unique index and the message for that row can be signed independently. A signer can sign and send many messages but each one must have a unique index (i.e. row id). A receiver in possesion of many row signatures for a given table can aggregate them into a single signature. This aggregated signature can be verified by a by anyone using the public key of the signer.
 
-At high-level there are 6 main functions in an H2S2. 
+At high-level there are 7 main functions in H2S2. 
 
 ### 1. **Setup**
 This initializes the public parameters for an instance of the protocol
 
-### 2. **Key Generation**
+### 2. **Precompute**
+This precomputes the hash aggregate value for the specific instance of the protocol. Note that this requires a unique `tag` for every table to be signed.
+
+### 3. **Key Generation**
 Calculate the private signing key and the public verification key.
 
-### 3. **Signing Messages**
-`sign` creates a signature for a message and an index. The signature is computed using the cryptographic parameters and the private key.
+### 4. **Signing Messages**
+Creates a signature for a message and an index. 
 
-### 4. **Verifying Signatures**
-`verify` ensures that a given signature matches the provided message, index, and public key.
+### 5. **Verifying Signatures**
+Ensures that a given signature matches the provided message, index, and public key.
 
-### 5. **Aggregating Signatures**
+### 6. **Aggregating Signatures (Evaluate)**
 `evaluate` combines multiple signatures into a single aggregated signature. It ensures weighted contributions based on the provided weights.
 
-### 6. **Verifying Aggregated Signatures**
-`verify_aggregate` validates the aggregated signature using precomputed hash aggregates and cryptographic parameters.
+### 7. **Verifying Aggregated Signatures**
+Validates the aggregated signature using precomputed hash aggregates and cryptographic parameters.
 
 ---
 
@@ -105,3 +111,4 @@ Calculate the private signing key and the public verification key.
         N
     );
     ```
+
