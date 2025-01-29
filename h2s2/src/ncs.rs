@@ -16,7 +16,7 @@ use digest::Digest;
 fn hash_to_g1<P: Pairing, D: Digest>(message_data: Vec<u8>) -> P::G1Affine {
     let mut g1_point: Option<P::G1Affine> = None;
     let mut counter = 0;
-    while g1_point.is_some() == false {
+    while g1_point.is_none() {
         let mut tmp_message = message_data.clone();
         tmp_message.push(counter);
         let hash_out = D::digest(&tmp_message);
