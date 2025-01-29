@@ -12,7 +12,7 @@ license = "Apache-2.0"
 description = ""
 edition = "2021"
 keywords = ["holographic", "homomorphic", "signature-scheme"]
-catagories = ["cryptography", "cryptography::cryptocurrencies"]
+categories = ["cryptography", "cryptography::cryptocurrencies"]
 
 [dependencies]
 ark-ec = {workspace = true}

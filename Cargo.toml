@@ -2,7 +2,7 @@
 members = [
   "h2s2",
 ]
-
+resolver = "2"
 
 [workspace.dependencies]
 ark-std = {version ="0.5.0", features = ["parallel"]}
