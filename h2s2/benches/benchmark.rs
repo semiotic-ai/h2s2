@@ -8,7 +8,7 @@ use digest::Digest;
 use h2s2::{
     holographic_homomorphic_signature_scheme::HolographicHomomorphicSignatureScheme,
     ncs::{Signature, NCS},
-}; // Update the path to match your module
+};
 
 type Curve = Bn254;
 type Fr = ark_bn254::Fr;
@@ -30,14 +30,14 @@ fn benchmark_sign(c: &mut Criterion) {
 
     // Benchmark group setup with sample size
     let mut group = c.benchmark_group("sign_group");
-    group.sample_size(100); // Set the sample size to 100
-    group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
+    group.sample_size(100);
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     group.bench_with_input(BenchmarkId::new("sign", index), &index, |b, &idx| {
         b.iter(|| {
             let signature = NCS::<Curve, Hasher>::sign(black_box(&params), idx, black_box(message))
                 .expect("Sign failed");
-            black_box(signature); // Prevent compiler optimizations
+            black_box(signature);
         });
     });
     group.finish();
@@ -56,7 +56,6 @@ fn benchmark_verify(c: &mut Criterion) {
     let index = 1;
     let signature = NCS::<Curve, Hasher>::sign(&params, index, message).expect("Sign failed");
 
-    // Benchmark group setup with sample size
     let mut group = c.benchmark_group("verify_group");
     group.sample_size(100); // Set the sample size to 100
     group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
@@ -101,7 +100,6 @@ fn benchmark_verify_aggregate(c: &mut Criterion) {
     let aggregated_signature =
         NCS::<Curve, Hasher>::evaluate(&signatures, &weights).expect("Evaluate failed");
 
-    // Benchmark group setup with sample size
     let mut group = c.benchmark_group("verify_aggregate_group");
     group.sample_size(100); // Set the sample size to 100
     group.measurement_time(std::time::Duration::from_secs(10)); // Extend measurement time
