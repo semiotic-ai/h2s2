@@ -1,3 +1,6 @@
+// Copyright 2025-, Semiotic AI, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 use std::ops::{Add, Mul, MulAssign};
 use std::{error::Error, marker::PhantomData};
 
